@@ -8,6 +8,7 @@ import { bedAt } from '../data/terrain.js';
 import { sunPosition, bearingToLocal, skyPalette } from '../data/sun.js';
 import { makeSurfaceSampler } from '../model/surface.js';
 import { Spray } from './spray.js';
+import { FoamSim } from './foam.js';
 
 const SKY_VERT = /* glsl */ `
 #include <common>
@@ -100,6 +101,7 @@ export class Viewer {
     this.ground.setSatellite(sat);
     this.satelliteLoaded = sat.loaded;
 
+    this.foam = new FoamSim(renderer, this.water, terrain);
     this.spray = new Spray(quality < 1 ? 250 : 450);
     this.scene.add(this.spray.points);
     this.windLocal = [0, 0];
@@ -445,6 +447,7 @@ export class Viewer {
         this.controls.target.set(pose.target[0], tide + 0.9 + bob * 0.6, pose.target[2]);
       }
     }
+    this.foam.step(dt * this.speed);
     this.spray.update({
       dt, state: this.state, sampler: this.sampler, time: this.time, exag, wind: this.windLocal,
       light: this.shared.uSunStrength.value + this.shared.uAmbient.value,

@@ -87,3 +87,50 @@ export function buildSpectrum({ Hs, Tp, angle = 0, depth = 12, gamma = 3.3, smax
 
 /** Significant height recovered from a component list: 4 sqrt(sum a^2 / 2). */
 export const hsOf = (comps) => 4 * Math.sqrt(comps.reduce((e, c) => e + (c.amp * c.amp) / 2, 0));
+
+/**
+ * Wave groups from first principles. A swell is a narrow band of frequencies and
+ * directions; added together they beat, which is why waves arrive in sets and why
+ * crests have a finite length. For a narrow band the sea is a carrier wave times a
+ * slowly varying envelope E(s, z) = sum a_j exp(i (dw_j s + kappa_j z + theta_j)),
+ * with s the time since a crest left the offshore edge and z the alongshore
+ * position. |E| is then Rayleigh distributed, as measured wave heights are
+ * (Longuet-Higgins 1952). Returns six components with sum a^2 = 1.
+ *
+ * @param period peak period (s): longer-period swell is narrower, so its sets are longer
+ * @param kind 'swell' | 'swell2' | 'wind'
+ */
+export function buildEnvelope({ period, kind = 'swell', seed = 11 }) {
+  const rand = rng(seed + Math.round(period * 10));
+  const wp = TWO_PI / period;
+  const width = Math.min(0.2, Math.max(0.06, 0.25 - 0.012 * period)) * (kind === 'wind' ? 1.4 : 1);
+  const spreadDeg = kind === 'wind' ? 16 : kind === 'swell2' ? 10 : 7;
+  const kShore = TWO_PI / (period * 5.5); // wavenumber around the break point
+  const q = [-1.6, -0.95, -0.32, 0.32, 0.95, 1.6]; // quantiles of a Gaussian band
+  let norm = 0;
+  const comps = q.map((g) => {
+    const a = Math.exp(-0.25 * g * g);
+    norm += a * a;
+    return {
+      dw: wp * width * g * (0.85 + 0.3 * rand()),
+      kappa: kShore * Math.sin(((rand() * 2 - 1) * spreadDeg * 1.6 * Math.PI) / 180),
+      theta: rand() * TWO_PI,
+      a,
+    };
+  });
+  for (const c of comps) c.a /= Math.sqrt(norm);
+  return comps;
+}
+
+/** Height of wave number n (crest time n * period) at alongshore z, as a fraction of Hs. */
+export function envelopeFactor(env, n, z, period) {
+  const s = n * period;
+  let re = 0, im = 0;
+  for (const c of env) {
+    const ph = c.dw * s + c.kappa * z + c.theta;
+    re += c.a * Math.cos(ph);
+    im += c.a * Math.sin(ph);
+  }
+  // H = Hrms |E| and Hs = 1.416 Hrms
+  return Math.min(1.5, Math.max(0.15, Math.hypot(re, im) * 0.706));
+}

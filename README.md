@@ -156,12 +156,27 @@ Iribarren number, then foam, spray and shading.
 | Wave profiles shaped by position over the sea floor | Surf's Up beach break (2007) | Yes: peaked, pitched profiles; plunging lips thrown forward |
 | Choppy horizontal displacement | Tessendorf; Gerstner | Yes: wind sea and crests |
 | Foam from breaking dissipation, whitecaps from steepness | Sea of Thieves; Crest | Yes (steepness instead of the FFT Jacobian) |
+| Foam simulated over time: injected, drifting, fading | Crest; Atlas / WaveWorks | Yes (`src/scene/foam.js`) |
+| Wave groups from a narrow-band spectrum, Rayleigh heights | Longuet-Higgins (1952) | Yes: sets, lulls and crest lengths come from the swell's bandwidth (`buildEnvelope`) |
 | Spray particles at the lip, blown by wind | Peachey (1986); Thurey et al. (2007) | Yes (`src/scene/spray.js`) |
 | Fresnel, depth-based colour, light through thin lips | Tessendorf; Sea of Thieves; Atlas | Yes, simplified |
 | Full FFT ocean with thousands of components | Tessendorf; Crest; WaveWorks | No: 20 components; a WebGPU FFT would be the upgrade |
 | Wave packets / wavelets, reflection off groynes | Jeschke et al. (2017-2020) | No |
 | True overturning barrels | Thurey (2007) particle sheets; FLIP/APIC in film | No: a height field cannot overhang; lips lean but do not curl |
 | Bubbles, underwater view, Snell's window | Weta Loki; Atlas | No |
+
+### Calibrating a beach
+
+The model is physically based but has never been tuned against Praia Nova itself. To calibrate:
+
+1. Pick a few moments when you (or the live cam) can see the surf, and note the time, the wave
+   height against a surfer's body, and roughly how far out the waves break.
+2. Open the app at the same hour and compare. Try corrections from the address bar:
+   `?cal=0.85,1` scales the incoming wave height by 0.85; `?cal=1,1.1` makes waves break 10 %
+   later (shallower). The first number fixes "too big / too small", the second "breaks too far out
+   / too close in".
+3. When the same pair of numbers fits several different days, save it in
+   `src/config/beaches.js` under `calibration`.
 
 ## Data sources
 

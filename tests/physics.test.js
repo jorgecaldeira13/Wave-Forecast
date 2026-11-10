@@ -184,3 +184,25 @@ test('wind-sea spectrum: JONSWAP/TMA with directional spreading', async () => {
   assert.ok(dirs.every((d) => Math.abs(d - 0.3) < 1.3));
   assert.equal(buildSpectrum({ Hs: 0, Tp: 7 }).comps.length, 0);
 });
+
+test('wave groups: envelope gives Rayleigh-like heights and longer sets for longer periods', async () => {
+  const { buildEnvelope, envelopeFactor } = await import('../src/physics/spectrum.js');
+  const stats = (period) => {
+    const env = buildEnvelope({ period });
+    close(env.reduce((e, c) => e + c.a * c.a, 0), 1, 1e-9, 'unit energy');
+    const f = Array.from({ length: 4000 }, (_, n) => envelopeFactor(env, n, 0, period));
+    const mean = f.reduce((a, b) => a + b) / f.length;
+    const sorted = [...f].sort((a, b) => b - a);
+    const third = sorted.slice(0, f.length / 3).reduce((a, b) => a + b) / (f.length / 3);
+    // run length: how many waves in a row stay above the mean (the size of a set)
+    let runs = 0, inRun = false, above = 0;
+    for (const v of f) { if (v > mean) { above++; if (!inRun) { runs++; inRun = true; } } else inRun = false; }
+    return { mean, third, max: sorted[0], run: above / runs };
+  };
+  const swell = stats(14), short = stats(7);
+  close(swell.mean, 0.63, 0.08, 'mean wave is about 0.63 Hs (Rayleigh)');
+  close(swell.third, 1.0, 0.12, 'the highest third averages Hs, by definition');
+  assert.ok(swell.max > 1.25 && swell.max <= 1.5, `biggest waves ${swell.max}`);
+  assert.ok(swell.run > short.run, `long-period swell has longer sets (${swell.run.toFixed(1)} vs ${short.run.toFixed(1)})`);
+  assert.ok(swell.run > 2 && swell.run < 12);
+});

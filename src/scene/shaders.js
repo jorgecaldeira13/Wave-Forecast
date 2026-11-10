@@ -63,16 +63,24 @@ uniform float uWindS;        // -1 offshore .. +1 onshore (shifts breaker type)
 uniform vec4 uComp[NC];      // wind-sea plane waves: kx, kz, omega, amplitude
 uniform float uCompPh[NC];
 uniform float uCompN;
+uniform vec4 uEnv[6];        // wave-group envelope: d-omega, alongshore k, phase, amplitude
+uniform sampler2D uFoamMap;  // simulated foam that lingers, drifts and fades
+uniform vec4 uFoamRect;      // x0, z0, sizeX, sizeZ covered by the foam map
 
 const float TAU = 6.28318530718;
 const float GAMMA_BORE = 0.5;
 
-// Waves arrive in sets and peak in places along the crest. Built from sines
-// only, so src/model/surface.js can reproduce it exactly on the CPU.
-float setFactor(float n, float z) {
-  float group = 0.6 * sin(n * 0.83 + 1.7) + 0.4 * sin(n * 0.31 + 0.4);
-  float peak = 0.5 * sin(z / 97.0 + n * 2.4) + 0.3 * sin(z / 41.0 - n * 1.3 + 1.0) + 0.2 * sin(z / 173.0 + n * 4.1);
-  return clamp(0.84 + 0.25 * group + 0.24 * peak, 0.3, 1.45);
+// Waves arrive in sets because a swell is a narrow band of frequencies and
+// directions that beat against each other. This is the envelope of that band
+// (see buildEnvelope in src/physics/spectrum.js; mirrored on the CPU).
+float setFactor(float n, float z, float T) {
+  float sT = n * T;
+  vec2 e = vec2(0.0);
+  for (int i = 0; i < 6; i++) {
+    float ph = uEnv[i].x * sT + uEnv[i].y * z + uEnv[i].z;
+    e += uEnv[i].w * vec2(cos(ph), sin(ph));
+  }
+  return clamp(length(e) * 0.706, 0.15, 1.5);
 }
 
 // One wave over phase q in [0,1): crest at q = 0. 'peaked' sharpens the crest
@@ -96,6 +104,8 @@ struct Surf {
   float steepSea; // slope of the wind-sea waves alone (whitecaps)
   vec2 lean;      // horizontal throw of the crest (m): choppy peaks, pitching lips
   float plunge;   // 0 spilling .. 1 plunging
+  float src;      // fresh white water being made right now (feeds the foam simulation)
+  vec2 dir;       // direction of travel
 };
 
 Surf surface(vec2 p, bool detail) {
@@ -121,8 +131,8 @@ Surf surface(vec2 p, bool detail) {
   float ph = (uTime - a.x) / T + jitter * 0.4;
   float n = floor(ph);
   float q = ph - n;
-  float s0 = setFactor(n, p.y);        // the wave that just passed
-  float s1 = setFactor(n + 1.0, p.y);  // the wave about to arrive
+  float s0 = setFactor(n, p.y, T);        // the wave that just passed
+  float s1 = setFactor(n + 1.0, p.y, T);  // the wave about to arrive
   float blend = smoothstep(0.3, 0.7, q);
   float sf = mix(s0, s1, blend);
   // local surf-similarity (Iribarren) number: beach slope over the square root of
@@ -154,7 +164,7 @@ Surf surface(vec2 p, bool detail) {
   float phB = (uTime - b.x) / TB + jitter * 0.6;
   float nB = floor(phB);
   float qB = phB - nB;
-  float sB = mix(setFactor(nB + 40.0, p.y + 300.0), setFactor(nB + 41.0, p.y + 300.0), smoothstep(0.3, 0.7, qB));
+  float sB = mix(setFactor(nB + 40.0, p.y + 300.0, TB), setFactor(nB + 41.0, p.y + 300.0, TB), smoothstep(0.3, 0.7, qB));
   float HB = min(b.w * uEdgeH.y * sB, 0.42 * h) * inside;
   float steepB = clamp(HB / (0.6 * h), 0.0, 1.0);
   float shapeB = waveShape(qB, steepB, 0.1 + 0.4 * steepB);
@@ -197,14 +207,19 @@ Surf surface(vec2 p, bool detail) {
   s.plunge = plunge * steep;
   s.slope = 0.5 * H * dshape * length(a.yz) / T * uExag;
   s.foam = 0.0;
+  s.dir = dirA;
+  float dissip = smoothstep(0.5, 0.88, a2.y / h);
+  float big = smoothstep(0.04, 0.3, H);
+  float roller = br1 * dissip * smoothstep(0.78, 0.94, q) * mix(1.0, 0.75, plunge);
+  float lip = br1 * (1.0 - br0) * smoothstep(0.9, 1.0, q) * (1.0 + 1.6 * plunge); // first white at the crest: a violent burst when plunging
+  s.src = clamp(max(roller, lip) * big * inside + 0.55 * smoothstep(0.24, 0.44, s.steepSea) * inside, 0.0, 1.0);
 
   if (detail) {
-    float dissip = smoothstep(0.5, 0.88, a2.y / h);
-    float big = smoothstep(0.04, 0.3, H);
-    float roller = br1 * dissip * smoothstep(0.78, 0.94, q) * mix(1.0, 0.75, plunge);
-    float lip = br1 * (1.0 - br0) * smoothstep(0.9, 1.0, q) * (1.0 + 1.6 * plunge); // first white at the crest: a violent burst when plunging
-    float trail = br0 * 0.82 * exp(-q * T / 4.2) * mix(0.4, 1.0, dissip);
-    float foam = max(max(roller, lip), trail) * big * inside;
+    // foam left behind by earlier waves comes from the simulation
+    vec2 fm = (p - uFoamRect.xy) / uFoamRect.zw;
+    float inMap = step(0.0, fm.x) * step(fm.x, 1.0) * step(0.0, fm.y) * step(fm.y, 1.0);
+    float trail = texture(uFoamMap, fm).r * inMap * 0.92;
+    float foam = max(max(roller, lip) * big * inside, trail);
     foam += 0.8 * smoothstep(0.22, 0.42, s.steepSea) * inside; // whitecaps where wind-sea waves steepen
     foam += 0.25 * uMess * smoothstep(0.75, 1.0, shapeB * 0.5 + 0.5) * steepB; // whitecaps on wind chop
     // lacy foam: ridged noise leaves a net of white lines as the foam thins out
