@@ -20,6 +20,12 @@ npm run dev      # then open the address it prints
 Other commands: `npm run build` (static site in `dist/`, host it anywhere), `npm test`,
 `npm run bake` (rebuild the beach terrain from open data).
 
+### Live site
+
+Every change merged into `main` is tested, built and published to GitHub Pages by
+`.github/workflows/deploy.yml`. One-off setup: repository **Settings → Pages → Source: GitHub
+Actions**. The site then lives at `https://<your-github-user>.github.io/Wave-Forecast/`.
+
 No API keys are needed.
 
 ## Using it
