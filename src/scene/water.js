@@ -60,7 +60,7 @@ void main() {
   vec3 sand = vec3(0.60, 0.49, 0.30) * mix(0.62, 1.0, smoothstep(0.0, 0.3, depth));
   // Atlantic surf-zone water is cloudy with stirred sand: the bottom fades within about a metre
   vec3 through = sand * exp(-path * vec3(1.5, 0.85, 0.8));
-  vec3 scatter = vec3(0.030, 0.082, 0.090);
+  vec3 scatter = vec3(0.022, 0.058, 0.062);
   // churned-up water carries sand and bubbles: paler and greener
   float churn = clamp(s.foam * 0.6 + textureLod(uFoamMap, (vBase - uFoamRect.xy) / uFoamRect.zw, 2.0).r * 0.9, 0.0, 1.0);
   scatter = mix(scatter, vec3(0.11, 0.20, 0.19), churn * 0.7);
@@ -74,7 +74,8 @@ void main() {
   float ndv = clamp(dot(N, V), 0.0, 1.0);
   float fres = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
   // a rough surface reflects a blur of the sky, never a perfect mirror at the horizon
-  fres *= 1.0 - 0.45 * clamp(unresolved * 4.0, 0.0, 1.0);
+  // seen from the beach the sea is mostly a mirror of the sky; roughness only takes a little off
+  fres = min(1.0, fres * 1.12 + 0.04) * (1.0 - 0.15 * clamp(unresolved * 4.0, 0.0, 1.0));
   vec3 R = reflect(-V, N);
   R.y = abs(R.y) + unresolved * 0.6;
   vec3 sky = skyColor(normalize(R));
@@ -88,7 +89,8 @@ void main() {
 
   vec3 col = mix(body, sky, fres) + spec * (1.0 - s.foam);
   // faces a touch darker, backs lighter, so the swell reads from any angle
-  col *= 1.0 - 0.26 * smoothstep(0.0, 0.22, s.slope) + 0.08 * smoothstep(0.0, 0.15, -s.slope);
+  // the face of a wave turns away from the bright sky and goes dark, as in any photo of surf
+  col *= 1.0 - 0.58 * smoothstep(0.0, 0.16, s.slope) + 0.06 * smoothstep(0.0, 0.15, -s.slope);
 
   // ---- white water ------------------------------------------------------------
   // lit like a rough white solid, with pits and shadows from its own bubbles
@@ -97,7 +99,8 @@ void main() {
   float foamLight = uAmbient * 1.25 + uSunStrength * 0.85 * (0.35 + 0.65 * max(dot(Nf, uSunDir), 0.0));
   vec3 foamCol = mix(vec3(0.80, 0.86, 0.88), vec3(0.97, 0.98, 0.96), pit) * mix(vec3(1.0), uSunColor, 0.3) * foamLight;
   // thin foam lets the water colour through
-  col = mix(col, mix(col * 1.25 + 0.05 * light, foamCol, smoothstep(0.15, 0.75, s.foam)), smoothstep(0.0, 0.25, s.foam));
+  // thin, spent foam is a pale grey veil over the water; fresh foam is solid white
+  col = mix(col, mix(col * 0.7 + foamCol * 0.42, foamCol, smoothstep(0.3, 0.85, s.foam)), smoothstep(0.0, 0.2, s.foam));
 
   float alpha = smoothstep(0.0, 0.035, s.film);
   col = applyFog(col, -V, dist);

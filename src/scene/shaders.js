@@ -19,23 +19,29 @@ uniform float uCloud;
 // Drifting cloud cover, so the sky (and its reflection in the water and on wet
 // sand) has structure. uCloud is the forecast cloud fraction.
 float cloudCover(vec3 d) {
-  vec2 uv = d.xz / (d.y + 0.2) * 0.06 + vec2(uSkyTime * 0.0012, uSkyTime * 0.0004);
-  float n = texture(uSkyNoise, uv).r * 0.55 + texture(uSkyNoise, uv * 2.9 + 0.31).g * 0.3 + texture(uSkyNoise, uv * 8.3 + 0.7).b * 0.15;
-  float edge = mix(0.74, 0.34, uCloud);
-  return smoothstep(edge, edge + 0.2, n) * smoothstep(0.0, 0.1, d.y);
+  // high, thin cloud in long ripples and streaks, as on most Atlantic days
+  vec2 uv = d.xz / (d.y + 0.16) * 0.05 + vec2(uSkyTime * 0.0010, uSkyTime * 0.0003);
+  float streak = texture(uSkyNoise, uv * vec2(0.55, 2.6)).r * 0.5 + texture(uSkyNoise, uv * vec2(1.7, 6.5) + 0.31).g * 0.3;
+  float ripple = texture(uSkyNoise, uv * vec2(9.0, 14.0) + 0.7).b * 0.2;
+  float n = streak + ripple;
+  float edge = mix(0.70, 0.26, uCloud);
+  return smoothstep(edge, edge + 0.34, n) * smoothstep(0.0, 0.07, d.y) * mix(0.55, 0.95, uCloud);
 }
 
 vec3 skyColor(vec3 d) {
   float h = clamp(d.y, 0.0, 1.0);
   vec3 col = mix(uSkyHorizon, uSkyZenith, pow(h, 0.42));
-  // haze: the sky whitens towards the horizon
   col = mix(col, uSkyHorizon * 1.08 + 0.03, exp(-h * 9.0) * 0.55);
   float s = max(dot(d, uSunDir), 0.0);
-  col += uSunColor * uSunStrength * uSunGlow * (pow(s, 6.0) * 0.10 + pow(s, 48.0) * 0.28);
+  // a low sun floods the haze around it with warm light
+  float low = 1.0 - clamp(uSunDir.y * 2.2, 0.0, 1.0);
+  vec3 glow = uSunColor * uSunStrength * uSunGlow * (pow(s, 6.0) * (0.10 + 0.35 * low) + pow(s, 48.0) * 0.30 + pow(s, 2.0) * 0.12 * low);
+  col += glow;
   float c = cloudCover(d);
-  float lum = dot(uSkyHorizon, vec3(0.3, 0.55, 0.15));
-  vec3 cloudCol = mix(vec3(lum) * 0.85, uSunColor * uSunStrength * 0.75 + uSkyHorizon * 0.5, 0.55 + 0.35 * pow(s, 3.0));
-  return mix(col, cloudCol, c * 0.9);
+  float lum = dot(col, vec3(0.3, 0.55, 0.15));
+  // thin cloud is lit through: bright and warm near the sun, pale grey away from it
+  vec3 cloudCol = mix(vec3(lum) * 1.05 + 0.10 * uAmbient, uSunColor * uSunStrength * (0.75 + 0.9 * pow(s, 4.0)) + uSkyHorizon * 0.45, 0.5 + 0.4 * pow(s, 2.0));
+  return mix(col, cloudCol, c);
 }
 
 vec3 applyFog(vec3 col, vec3 viewRay, float dist) {
