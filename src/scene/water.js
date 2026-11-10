@@ -233,6 +233,9 @@ export class Water {
       uSwash: { value: new THREE.Vector2(0, 0) },
       uMess: { value: 0 },
       uWindS: { value: 0 },
+      uEnv: { value: Array.from({ length: 6 }, (_, i) => new THREE.Vector4(0, 0, 0, i === 0 ? 1 : 0)) },
+      uFoamMap: { value: this.noise },
+      uFoamRect: { value: new THREE.Vector4(-760, -750, 930, 1500) },
       uComp: { value: Array.from({ length: 20 }, () => new THREE.Vector4()) },
       uCompPh: { value: new Float32Array(20) },
       uCompN: { value: 0 },
@@ -282,6 +285,7 @@ export class Water {
       u.uCompPh.value[i] = c.phase;
     });
     u.uWindS.value = state.windEffect?.s ?? 0;
+    (state.envelope ?? []).slice(0, 6).forEach((c, i) => u.uEnv.value[i].set(c.dw, c.kappa, c.theta, c.a));
     u.uEdgeH.value.set(a?.height ?? 0, spec.length ? 0 : b?.height ?? 0);
     u.uPeriod.value.set(a?.period ?? 10, b?.period ?? 5);
     u.uTide.value = state.tide;

@@ -43,7 +43,9 @@ async function start() {
   const overridden = applyOverrides(hours);
 
   setLoading('Bending the swell around the sandbars…');
-  const ctx = buildContext(terrain);
+  // ?cal=height,breakIndex tries a calibration without editing the beach file
+  const cal = params.get('cal')?.split(',').map(Number);
+  const ctx = buildContext(terrain, cal ? { height: cal[0] || 1, breakIndex: cal[1] || 1 } : beach.calibration);
   const quick = hours.map((h) => quickSeaState(ctx, h));
 
   const small = Math.min(window.innerWidth, window.innerHeight) < 600;

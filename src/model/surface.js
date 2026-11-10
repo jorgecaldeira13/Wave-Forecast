@@ -1,6 +1,8 @@
 // CPU twin of the wave shader (src/scene/shaders.js): the height of the sea
 // surface at one point and time. Used to float things on the water.
 
+import { envelopeFactor } from '../physics/spectrum.js';
+
 const TAU = Math.PI * 2;
 const GAMMA_BORE = 0.5;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -9,12 +11,6 @@ const smoothstep = (a, b, v) => {
   return t * t * (3 - 2 * t);
 };
 const mix = (a, b, t) => a + (b - a) * t;
-
-function setFactor(n, z) {
-  const group = 0.6 * Math.sin(n * 0.83 + 1.7) + 0.4 * Math.sin(n * 0.31 + 0.4);
-  const peak = 0.5 * Math.sin(z / 97 + n * 2.4) + 0.3 * Math.sin(z / 41 - n * 1.3 + 1.0) + 0.2 * Math.sin(z / 173 + n * 4.1);
-  return clamp(0.84 + 0.25 * group + 0.24 * peak, 0.3, 1.45);
-}
 
 function waveShape(q, peaked, skew) {
   const w = q - (skew * (1 - Math.cos(TAU * q))) / TAU;
@@ -33,6 +29,8 @@ export function makeSurfaceSampler(grid, state) {
   const { nx, nz, dx, dz, x0, z0, bed } = grid;
   const [a, b] = state.trains;
   const mess = state.mess;
+  const env = state.envelope ?? [];
+  const setFactor = (n, z, T) => (env.length ? envelopeFactor(env, n, z, T) : 0.7);
   const windS = state.windEffect?.s ?? 0;
   const comps = state.spectrum?.comps ?? [];
   const bedAt = (x, z) => {
@@ -53,7 +51,7 @@ export function makeSurfaceSampler(grid, state) {
       const f = a.field, T = a.period;
       const ph = (time - sample(f.tau, i, j, u, v)) / T;
       const n = Math.floor(ph), q = ph - n;
-      const s0 = setFactor(n, z), s1 = setFactor(n + 1, z);
+      const s0 = setFactor(n, z, T), s1 = setFactor(n + 1, z, T);
       const blend = smoothstep(0.3, 0.7, q);
       const sf = mix(s0, s1, blend);
       // local surf-similarity number, as in the shader
@@ -75,7 +73,7 @@ export function makeSurfaceSampler(grid, state) {
       const f = b.field, T = b.period;
       const ph = (time - sample(f.tau, i, j, u, v)) / T;
       const n = Math.floor(ph), q = ph - n;
-      const sB = mix(setFactor(n + 40, z + 300), setFactor(n + 41, z + 300), smoothstep(0.3, 0.7, q));
+      const sB = mix(setFactor(n + 40, z + 300, T), setFactor(n + 41, z + 300, T), smoothstep(0.3, 0.7, q));
       const HB = Math.min(sample(f.K, i, j, u, v) * b.height * sB, 0.42 * h);
       const steepB = clamp(HB / (0.6 * h), 0, 1);
       eta += 0.5 * HB * waveShape(q, steepB, 0.1 + 0.4 * steepB);

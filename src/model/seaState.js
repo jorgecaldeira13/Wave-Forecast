@@ -1,7 +1,7 @@
 // Turns one forecast hour into what you would actually see at the beach:
 // the solved wave fields for the renderer plus a human summary.
 
-import { buildSpectrum } from '../physics/spectrum.js';
+import { buildSpectrum, buildEnvelope } from '../physics/spectrum.js';
 import {
   makeSolverGrid,
   windBreakingEffect,
@@ -16,22 +16,25 @@ import {
 const DEG = Math.PI / 180;
 const wrap180 = (a) => ((((a + 180) % 360) + 360) % 360) - 180;
 
-export function buildContext(terrain) {
+export function buildContext(terrain, calibration = null) {
   const grid = makeSolverGrid(terrain, 256);
   return {
     grid,
     profile: centreProfile(grid),
     refDepth: terrain.meta.refDepth,
     seawardBearing: terrain.meta.seawardBearing,
+    // per-beach corrections from comparing the model with reality (see README, "Calibrating")
+    calibration: { height: 1, breakIndex: 1, ...(calibration ?? {}) },
   };
 }
 
 /** Wave trains at the offshore edge of the patch, strongest first. */
 function boundaryTrains(ctx, hour) {
   const edgeDepth = Math.max(ctx.profile.boundaryDepth + hour.tide, 2);
+  const gain = ctx.calibration?.height ?? 1;
   return hour.trains
     .map((train) => ({
-      ...transformToBoundary(train, ctx.refDepth, edgeDepth, ctx.seawardBearing),
+      ...transformToBoundary({ ...train, height: train.height * gain }, ctx.refDepth, edgeDepth, ctx.seawardBearing),
       kind: train.kind,
       offshore: train,
     }))
@@ -139,6 +142,7 @@ export function quickSeaState(ctx, hour) {
   const combined = Math.hypot(...trains.map((t) => t.height));
   const relation = windRelation(hour.wind, ctx.seawardBearing);
   const fx = windEffect(hour.wind, relation, trains);
+  fx.gamma *= ctx.calibration.breakIndex;
   const surfHeight = quickBreakHeight(ctx.profile, hour.tide, { ...trains[0], height: combined }, fx.gamma);
   return { surfHeight, rating: rate(surfHeight, trains[0].period, hour.wind, relation) };
 }
@@ -148,6 +152,7 @@ export function computeSeaState(ctx, hour) {
   const trains = boundaryTrains(ctx, hour).slice(0, 2);
   const relation = windRelation(hour.wind, ctx.seawardBearing);
   const fx = windEffect(hour.wind, relation, trains);
+  fx.gamma *= ctx.calibration.breakIndex;
   const solved = trains.map((b) => ({ ...b, field: solveTrain(ctx.grid, hour.tide, b, fx.gamma) }));
   const crossing = crossingSeas(hour);
   let surf = null, sets = null, wash = { setup: 0, swash: 0, r2: 0 };
@@ -167,6 +172,7 @@ export function computeSeaState(ctx, hour) {
   return {
     hour,
     spectrum,
+    envelope: solved.length ? buildEnvelope({ period: solved[0].period, kind: solved[0].kind }) : [],
     trains: solved,
     surf,
     setHeight: sets?.height ?? surfHeight,

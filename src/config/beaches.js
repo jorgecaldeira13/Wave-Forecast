@@ -21,6 +21,10 @@ export const BEACHES = {
     timezone: 'Europe/Lisbon',
     // Median sand grain ~0.3 mm -> Dean profile scale fitted to EMODnet depths.
     deanA: 0.085,
+    // Corrections from comparing the model with the real beach. 1 = uncalibrated.
+    //   height:     multiplies the forecast wave height before it reaches the beach
+    //   breakIndex: multiplies the height-to-depth ratio at which waves break
+    calibration: { height: 1, breakIndex: 1 },
     // Nearest public webcam (not ours; opens on its own site).
     webcam: {
       url: 'https://www.skylinewebcams.com/webcam/portugal/lisboa/almada/costa-da-caparica-praia-de-santo-antonio-beach.html',
