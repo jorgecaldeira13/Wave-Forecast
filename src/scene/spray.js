@@ -69,7 +69,7 @@ export class Spray {
     this.uniforms.uColor.value.setScalar(0.55 + 0.45 * Math.min(1, light));
     const H = state?.surfHeight ?? 0;
     // spawn along the surf zone, only on crests of waves that are breaking
-    if (sampler && H > 0.5) {
+    if (sampler && H > 1.3) { // small surf throws no visible spray
       this.carry += dt * Math.min(260, 70 * H * H);
       const breakX = Math.min(-30, state.surf?.breakX ?? -100);
       let tries = 0;

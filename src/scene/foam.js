@@ -26,7 +26,8 @@ void main() {
   vec2 from = p - s.dir * 1.1 * uDt;
   float prev = texture2D(uPrev, (from - uFoamRect.xy) / uFoamRect.zw).r;
   // foam lasts longer in the churned inner surf zone, and soaks away on the sand
-  float life = s.film > 0.02 ? mix(4.5, 8.0, smoothstep(2.5, 0.6, s.still)) : 1.6;
+  // the inner surf zone stays streaked with foam from one wave to the next
+  float life = s.film > 0.02 ? mix(5.0, 16.0, smoothstep(2.2, 0.5, s.still)) : 2.2;
   prev -= max(prev * (1.0 - exp(-uDt / life)), 0.006 * step(0.0001, uDt));
   gl_FragColor = vec4(clamp(max(prev, s.src), 0.0, 1.0), 0.0, 0.0, 1.0);
 }

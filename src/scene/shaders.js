@@ -12,13 +12,36 @@ uniform float uSunStrength;
 uniform float uSunGlow;
 uniform float uAmbient;
 uniform float uFogDensity;
+uniform sampler2D uSkyNoise;
+uniform float uSkyTime;
+uniform float uCloud;
+
+// Drifting cloud cover, so the sky (and its reflection in the water and on wet
+// sand) has structure. uCloud is the forecast cloud fraction.
+float cloudCover(vec3 d) {
+  // high, thin cloud in long ripples and streaks, as on most Atlantic days
+  vec2 uv = d.xz / (d.y + 0.16) * 0.05 + vec2(uSkyTime * 0.0010, uSkyTime * 0.0003);
+  float streak = texture(uSkyNoise, uv * vec2(0.55, 2.6)).r * 0.5 + texture(uSkyNoise, uv * vec2(1.7, 6.5) + 0.31).g * 0.3;
+  float ripple = texture(uSkyNoise, uv * vec2(9.0, 14.0) + 0.7).b * 0.2;
+  float n = streak + ripple;
+  float edge = mix(0.70, 0.26, uCloud);
+  return smoothstep(edge, edge + 0.34, n) * smoothstep(0.0, 0.07, d.y) * mix(0.55, 0.95, uCloud);
+}
 
 vec3 skyColor(vec3 d) {
   float h = clamp(d.y, 0.0, 1.0);
   vec3 col = mix(uSkyHorizon, uSkyZenith, pow(h, 0.42));
+  col = mix(col, uSkyHorizon * 1.08 + 0.03, exp(-h * 9.0) * 0.55);
   float s = max(dot(d, uSunDir), 0.0);
-  col += uSunColor * uSunStrength * uSunGlow * (pow(s, 6.0) * 0.10 + pow(s, 48.0) * 0.28);
-  return col;
+  // a low sun floods the haze around it with warm light
+  float low = 1.0 - clamp(uSunDir.y * 2.2, 0.0, 1.0);
+  vec3 glow = uSunColor * uSunStrength * uSunGlow * (pow(s, 6.0) * (0.10 + 0.35 * low) + pow(s, 48.0) * 0.30 + pow(s, 2.0) * 0.12 * low);
+  col += glow;
+  float c = cloudCover(d);
+  float lum = dot(col, vec3(0.3, 0.55, 0.15));
+  // thin cloud is lit through: bright and warm near the sun, pale grey away from it
+  vec3 cloudCol = mix(vec3(lum) * 1.05 + 0.10 * uAmbient, uSunColor * uSunStrength * (0.75 + 0.9 * pow(s, 4.0)) + uSkyHorizon * 0.45, 0.5 + 0.4 * pow(s, 2.0));
+  return mix(col, cloudCol, c);
 }
 
 vec3 applyFog(vec3 col, vec3 viewRay, float dist) {
@@ -67,7 +90,21 @@ uniform vec4 uEnv[6];        // wave-group envelope: d-omega, alongshore k, phas
 uniform sampler2D uFoamMap;  // simulated foam that lingers, drifts and fades
 uniform vec4 uFoamRect;      // x0, z0, sizeX, sizeZ covered by the foam map
 
+uniform vec3 uWind;           // unit direction the wind blows towards (x, z) and speed in m/s
+uniform sampler2D uTile;      // live ocean patch: height, slope x, slope z
+uniform float uTileSize;
+
 const float TAU = 6.28318530718;
+
+// Read the ocean patch, turned so its waves run downwind. Returns height and world-space slopes.
+vec3 tileSample(vec2 p, float size) {
+  vec2 w = uWind.xy;
+  vec2 q = vec2(dot(p, w), dot(p, vec2(-w.y, w.x))) / size;
+  vec3 t = texture(uTile, q).rgb;
+  return vec3(t.r * size / uTileSize, w * t.g + vec2(-w.y, w.x) * t.b);
+}
+float chopAmount() { return 0.2 + 1.1 * clamp(uWind.z / 11.0, 0.0, 1.0); }
+
 const float GAMMA_BORE = 0.5;
 
 // Waves arrive in sets because a swell is a narrow band of frequencies and
@@ -185,6 +222,9 @@ Surf surface(vec2 p, bool detail) {
     gradS += -amp * sin(phs) * c.xy;
   }
   grad += gradS;
+
+  // ---- fine texture of the sea surface from the live ocean patch -----------
+  eta += min(tileSample(p, uTileSize).x * chopAmount() * 1.6, 0.25 * h) * smoothstep(0.0, 0.5, h);
 
   // ---- setup and swash at the water's edge --------------------------------
   float nearEdge = 1.0 - smoothstep(0.0, 0.7, still);

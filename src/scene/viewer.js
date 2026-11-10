@@ -81,6 +81,9 @@ export class Viewer {
       uSunGlow: { value: 1 },
       uAmbient: { value: 0.55 },
       uFogDensity: { value: 0.00011 },
+      uSkyNoise: { value: null },
+      uSkyTime: { value: 0 },
+      uCloud: { value: 0.2 },
     };
 
     const sky = new THREE.Mesh(
@@ -94,6 +97,7 @@ export class Viewer {
     this.ground = new Terrain(terrain, this.shared);
     this.scene.add(this.ground.mesh);
     this.water = new Water(terrain, this.shared, makeBedTexture(terrain), { quality });
+    this.shared.uSkyNoise.value = this.water.noise;
     this.scene.add(this.water.mesh);
 
     // satellite photo for everything from just seaward of the groynes to the town
@@ -418,6 +422,7 @@ export class Viewer {
     s.uSunStrength.value = pal.strength;
     s.uSunGlow.value = pal.glow;
     s.uAmbient.value = pal.ambient;
+    s.uCloud.value = Math.min(1, Math.max(0, (state.hour.cloud ?? 20) / 100));
     this.sun = sun;
 
     // wind in the beach frame (m/s, direction it blows towards) for the spray
@@ -484,6 +489,8 @@ export class Viewer {
         this.controls.target.set(pose.target[0], tide + 0.9 + bob * 0.6, pose.target[2]);
       }
     }
+    this.shared.uSkyTime.value = this.time;
+    this.water.tile.update(this.time);
     this.foam.step(dt * this.speed);
     this.spray.update({
       dt, state: this.state, sampler: this.sampler, time: this.time, exag, wind: this.windLocal,

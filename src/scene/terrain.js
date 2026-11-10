@@ -50,6 +50,14 @@ void main() {
   vec3 land = mix(mix(ground, blurred, 0.6), sat, inside);
   land = mix(ground, land, uSatMix);
 
+  // up close the satellite photo runs out of detail: add the grain, ripples and
+  // footprints of real sand (fades out with distance)
+  float near = 1.0 / (1.0 + length(cameraPosition - vWorld) / 45.0);
+  float g1 = texture2D(uSkyNoise, vWorld.xz * 0.61).r * 0.6 + texture2D(uSkyNoise, vWorld.xz * 2.9 + 0.4).g * 0.4;
+  float g2 = texture2D(uSkyNoise, vWorld.xz * 0.17 + 0.2).b;
+  float dimple = smoothstep(0.62, 0.8, g2) * smoothstep(0.6, 2.2, y); // trampled dry sand
+  land *= 1.0 + near * (0.34 * (g1 - 0.5) - 0.20 * dimple);
+
   // below the waterline the photo shows old waves, so use clean sand instead
   float above = smoothstep(-0.25, 0.45, y);
   vec3 albedo = mix(sand, land, above);
@@ -59,7 +67,7 @@ void main() {
 
   // wet sand where the swash reaches
   float wetTop = uTide + uWetLine;
-  float wet = (1.0 - smoothstep(wetTop - 0.05, wetTop + 0.3, y)) * (1.0 - vGroyne);
+  float wet = (1.0 - smoothstep(wetTop + 0.05, wetTop + 0.55, y)) * (1.0 - vGroyne);
   albedo *= mix(1.0, 0.66, wet * above);
 
   // the imagery already carries daylight, so shade gently
@@ -68,8 +76,10 @@ void main() {
   vec3 col = albedo * (uAmbient * 1.15 + uSunStrength * (0.32 + 0.5 * ndl)) * lightCol;
   // a little sky sheen on wet sand
   vec3 V = normalize(cameraPosition - vWorld);
-  float fres = pow(1.0 - max(dot(N, V), 0.0), 4.0);
-  col = mix(col, skyColor(reflect(-V, N)), 0.35 * fres * wet * above);
+  // wet sand is a dark mirror: it shows the sky, most strongly at a low angle
+  float mirror = (0.06 + 0.94 * pow(1.0 - max(dot(N, V), 0.0), 5.0)) * wet * above;
+  float gloss = 1.0 - smoothstep(wetTop - 0.25, wetTop + 0.3, y);
+  col = mix(col, skyColor(reflect(-V, vec3(0.0, 1.0, 0.0))), clamp(mirror * (0.75 + 0.6 * gloss) + 0.22 * gloss * wet * above, 0.0, 0.92));
 
   col = applyFog(col, -V, length(cameraPosition - vWorld));
   gl_FragColor = vec4(col, 1.0);

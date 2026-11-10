@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { COMMON, WAVES } from './shaders.js';
+import { OceanTile } from './oceanTile.js';
 
 const VERT = /* glsl */ `
 ${COMMON}
@@ -25,7 +26,6 @@ ${COMMON}
 ${WAVES}
 #include <common>
 #include <logdepthbuf_pars_fragment>
-uniform vec3 uWind;   // unit direction the wind blows towards (x, z) and speed in m/s
 varying vec3 vWorld;
 varying vec2 vBase;
 
@@ -36,49 +36,73 @@ void main() {
   float dist = length(toCam);
   vec3 V = toCam / dist;
 
-  // wind chop: small ripples that the mesh does not carry
-  float chop = clamp(uWind.z / 11.0, 0.03, 1.0);
-  vec2 drift = uWind.xy * uTime;
-  vec2 r1 = texture(uNoise, vWorld.xz * 0.090 - drift * 0.030).rg - 0.5;
-  vec2 r2 = texture(uNoise, vWorld.xz * 0.310 - drift * 0.055).gb - 0.5;
-  vec2 r3 = texture(uNoise, vWorld.xz * 1.300 - drift * 0.110).br - 0.5;
-  float nearFade = 1.0 / (1.0 + dist * 0.012);
-  vec2 ripple = (r1 * 0.55 * mix(0.3, 1.0, nearFade) + r2 * 0.45 * mix(0.15, 1.0, nearFade) + r3 * 0.5 * nearFade) * (0.035 + 0.9 * chop * chop + 0.12 * chop);
-  vec2 g = s.grad + ripple * (1.0 - 0.7 * s.foam);
+  // fine surface detail: the live ocean patch at three sizes, fading with distance
+  float chop = chopAmount();
+  vec2 d1 = tileSample(vWorld.xz, uTileSize).yz;
+  vec2 d2 = tileSample(vWorld.xz + 13.7, uTileSize * 0.23).yz;
+  vec2 d3 = tileSample(vWorld.xz - 31.0, uTileSize * 4.3).yz;
+  float f1 = 1.0 / (1.0 + dist / 320.0), f2 = 1.0 / (1.0 + dist / 55.0);
+  vec2 detail = (d1 * f1 + d2 * 0.8 * f2 + d3 * 0.55) * chop;
+  // how rough the part we can no longer resolve is: it widens the sun's glitter
+  float unresolved = chop * (0.16 * (1.0 - f1) + 0.13 * (1.0 - f2));
+  vec2 g = s.grad + detail * (1.0 - 0.75 * s.foam);
   vec3 N = normalize(vec3(-g.x, 1.0, -g.y));
 
-  // water body: the deeper, the darker; green light glows through steep faces
+  float sunUp = clamp(uSunDir.y * 2.5, 0.0, 1.0);
+  float light = uAmbient + uSunStrength * (0.25 + 0.75 * sunUp);
+
+  // ---- what you see through the surface --------------------------------------
+  // Sand seen through water: red light is absorbed within a metre or two, green
+  // and blue travel further. Light scattered back by the water itself takes over
+  // with depth. This is what paints the shallows turquoise and the deep sea dark.
   float depth = max(s.film, 0.0);
-  vec3 shallow = vec3(0.050, 0.300, 0.270);
-  vec3 deep = vec3(0.004, 0.046, 0.082);
-  vec3 body = mix(shallow, deep, 1.0 - exp(-depth * 0.32));
-  float light = uAmbient + uSunStrength * (0.25 + 0.75 * clamp(uSunDir.y * 2.5, 0.0, 1.0));
-  body *= light;
+  float path = depth * (1.0 + 0.6 * (1.0 - abs(V.y)));
+  vec3 sand = vec3(0.60, 0.49, 0.30) * mix(0.62, 1.0, smoothstep(0.0, 0.3, depth));
+  // Atlantic surf-zone water is cloudy with stirred sand: the bottom fades within about a metre
+  vec3 through = sand * exp(-path * vec3(1.5, 0.85, 0.8));
+  vec3 scatter = vec3(0.022, 0.058, 0.062);
+  // churned-up water carries sand and bubbles: paler and greener
+  float churn = clamp(s.foam * 0.6 + textureLod(uFoamMap, (vBase - uFoamRect.xy) / uFoamRect.zw, 2.0).r * 0.9, 0.0, 1.0);
+  scatter = mix(scatter, vec3(0.11, 0.20, 0.19), churn * 0.7);
+  vec3 body = (through + scatter * (1.0 - exp(-path * 1.1))) * light;
+  // sunlight passing through the thin upper part of a steep wave face
   float back = pow(clamp(dot(V, -uSunDir) * 0.5 + 0.5, 0.0, 1.0), 2.0);
-  body += vec3(0.008, 0.13, 0.10) * s.face * (0.4 + 1.2 * back) * uSunStrength;
-  // sunlight through the thin pitching lip of a plunging wave
+  body += vec3(0.010, 0.15, 0.115) * s.face * (0.45 + 1.3 * back) * uSunStrength;
   body += vec3(0.02, 0.20, 0.15) * s.plunge * smoothstep(0.1, 0.3, s.slope) * (0.3 + back) * uSunStrength;
 
-  float fres = 0.02 + 0.98 * pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 5.0);
+  // ---- what bounces off it ----------------------------------------------------
+  float ndv = clamp(dot(N, V), 0.0, 1.0);
+  float fres = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
+  // a rough surface reflects a blur of the sky, never a perfect mirror at the horizon
+  // seen from the beach the sea is mostly a mirror of the sky; roughness only takes a little off
+  fres = min(1.0, fres * 1.12 + 0.04) * (1.0 - 0.15 * clamp(unresolved * 4.0, 0.0, 1.0));
   vec3 R = reflect(-V, N);
-  R.y = abs(R.y);
-  vec3 sky = skyColor(R);
-  float sunSpec = pow(max(dot(R, uSunDir), 0.0), mix(900.0, 90.0, chop));
-  vec3 spec = uSunColor * uSunStrength * uSunGlow * sunSpec * mix(6.0, 1.6, chop);
+  R.y = abs(R.y) + unresolved * 0.6;
+  vec3 sky = skyColor(normalize(R));
+  // sun glitter: a tight sparkle up close, a broad shimmering path far away
+  vec3 Hv = normalize(V + uSunDir);
+  float rough = clamp(0.035 + unresolved * 1.4, 0.03, 0.4);
+  float a2 = rough * rough;
+  float ndh = clamp(dot(N, Hv), 0.0, 1.0);
+  float dGGX = a2 / (3.14159 * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
+  vec3 spec = uSunColor * uSunStrength * uSunGlow * min(dGGX, 60.0) * 0.045 * (0.3 + 0.7 * fres) * sunUp;
 
-  vec3 col = mix(body, sky, fres) + spec;
-  // make the swell readable from any angle: faces a touch darker, backs lighter
-  col *= 1.0 - 0.34 * smoothstep(0.0, 0.22, s.slope) + 0.10 * smoothstep(0.0, 0.15, -s.slope);
+  vec3 col = mix(body, sky, fres) + spec * (1.0 - s.foam);
+  // faces a touch darker, backs lighter, so the swell reads from any angle
+  // the face of a wave turns away from the bright sky and goes dark, as in any photo of surf
+  col *= 1.0 - 0.58 * smoothstep(0.0, 0.16, s.slope) + 0.06 * smoothstep(0.0, 0.15, -s.slope);
 
-  // white water, lit by sun and sky, with soft shadows in its own texture
-  float foamLight = uAmbient * 1.3 + uSunStrength * 0.8 * (0.4 + 0.6 * max(dot(N, uSunDir), 0.0));
-  float foamTex = 0.84 + 0.16 * texture(uNoise, vWorld.xz * 0.35 + uTime * 0.03).a;
-  vec3 foamCol = mix(vec3(0.86, 0.93, 0.96), uSunColor, 0.3) * foamLight * foamTex;
-  col = mix(col, foamCol, s.foam);
+  // ---- white water ------------------------------------------------------------
+  // lit like a rough white solid, with pits and shadows from its own bubbles
+  float pit = texture(uNoise, vWorld.xz * 0.9 + uTime * 0.04).a * 0.6 + texture(uNoise, vWorld.xz * 3.7 - uTime * 0.07).r * 0.4;
+  vec3 Nf = normalize(vec3(-g.x * 0.5, 1.0, -g.y * 0.5));
+  float foamLight = uAmbient * 1.25 + uSunStrength * 0.85 * (0.35 + 0.65 * max(dot(Nf, uSunDir), 0.0));
+  vec3 foamCol = mix(vec3(0.80, 0.86, 0.88), vec3(0.97, 0.98, 0.96), pit) * mix(vec3(1.0), uSunColor, 0.3) * foamLight;
+  // thin foam lets the water colour through
+  // thin, spent foam is a pale grey veil over the water; fresh foam is solid white
+  col = mix(col, mix(col * 0.7 + foamCol * 0.42, foamCol, smoothstep(0.3, 0.85, s.foam)), smoothstep(0.0, 0.2, s.foam));
 
-  float alpha = clamp(1.0 - exp(-depth * 1.9) + s.foam, 0.0, 1.0);
-  alpha *= smoothstep(0.0, 0.03, s.film);
-
+  float alpha = smoothstep(0.0, 0.035, s.film);
   col = applyFog(col, -V, dist);
   gl_FragColor = vec4(col, alpha);
   #include <tonemapping_fragment>
@@ -217,6 +241,7 @@ export class Water {
     this.fieldA2 = fieldTexture(this.n);
     this.fieldB = fieldTexture(this.n);
     this.noise = makeNoiseTexture();
+    this.tile = new OceanTile({ n: quality < 1 ? 64 : 128 });
     this.uniforms = {
       ...shared,
       uFieldA: { value: this.fieldA },
@@ -224,6 +249,8 @@ export class Water {
       uFieldB: { value: this.fieldB },
       uBed: { value: bedTexture },
       uNoise: { value: this.noise },
+      uTile: { value: this.tile.texture },
+      uTileSize: { value: this.tile.size },
       uDomain: { value: new THREE.Vector4(terrain.x0, terrain.z0, terrain.sizeX, terrain.sizeZ) },
       uTime: { value: 0 },
       uTide: { value: 0 },
