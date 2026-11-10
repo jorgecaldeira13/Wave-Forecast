@@ -94,6 +94,8 @@ struct Surf {
   float face;    // 0..1 how steep and tall the wave face is here
   float slope;   // surface slope along the direction of travel: + on the front face
   float steepSea; // slope of the wind-sea waves alone (whitecaps)
+  vec2 lean;      // horizontal throw of the crest (m): choppy peaks, pitching lips
+  float plunge;   // 0 spilling .. 1 plunging
 };
 
 Surf surface(vec2 p, bool detail) {
@@ -186,6 +188,13 @@ Surf surface(vec2 p, bool detail) {
   s.film = uTide + s.eta - bed;
   s.face = steep * smoothstep(0.55, 1.0, q) * (1.0 - broken) * (1.0 + 0.6 * plunge);
   s.steepSea = length(gradS);
+  // Gerstner-style horizontal motion: crests bunch up and, when plunging, the lip
+  // is thrown ahead of the face (the profile idea behind Surf's Up's wave rigs)
+  vec2 dirA = a.yz / max(length(a.yz), 1e-5);
+  float crest01 = clamp(shape * 0.62, 0.0, 1.0);
+  s.lean = (dirA * 0.5 * H * crest01 * (0.22 * steep + 1.1 * plunge * steep * steep) * (1.0 - 0.6 * broken)
+            - gradS * 1.6) * uExag;
+  s.plunge = plunge * steep;
   s.slope = 0.5 * H * dshape * length(a.yz) / T * uExag;
   s.foam = 0.0;
 

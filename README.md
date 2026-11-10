@@ -138,6 +138,31 @@ Perrie (2009), *J. Physical Oceanography*; Peregrine (1983), *Annual Review of F
 I could read abstracts and citing papers for these, but not every original in full text, so
 treat the numbers above as the literature's direction rather than a calibrated fit.
 
+### Rendering techniques, and where they come from
+
+The renderer follows the layered approach of the graphics literature: a wind-driven spectrum for
+the open sea, an energy-carrying, seabed-aware layer near shore, a breaker layer chosen by the
+Iribarren number, then foam, spray and shading.
+
+| Technique | Source | In the app |
+| --- | --- | --- |
+| Finite-depth dispersion, omega^2 = gk tanh(kD) | Tessendorf (2004) | Yes: every wave speed |
+| JONSWAP spectrum, TMA depth correction | Hasselmann et al. (1973); Bouws et al. (1985); Lee et al. (2007) | Yes: the wind sea, 20 plane waves (`src/physics/spectrum.js`) |
+| cos^2s directional spreading | Mitsuyasu / Goda | Yes: in the spectrum and in the offshore transform |
+| Swell and wind sea as separate partitions | Houdini TMA, Open-Meteo partitions | Yes |
+| Phase function that refracts over the seabed | Peachey (1986); Fournier & Reeves (1986) | Yes: the travel-time field |
+| Energy transported over bathymetry, shoaling, H = gamma d cap | Jeschke & Wojtan wave packets (2017); SWAN / Battjes-Janssen | Yes, on a grid rather than with packets |
+| Breaker type from the Iribarren number | Battjes (1974) | Yes: evaluated per pixel from the real slope, shifted by wind |
+| Wave profiles shaped by position over the sea floor | Surf's Up beach break (2007) | Yes: peaked, pitched profiles; plunging lips thrown forward |
+| Choppy horizontal displacement | Tessendorf; Gerstner | Yes: wind sea and crests |
+| Foam from breaking dissipation, whitecaps from steepness | Sea of Thieves; Crest | Yes (steepness instead of the FFT Jacobian) |
+| Spray particles at the lip, blown by wind | Peachey (1986); Thurey et al. (2007) | Yes (`src/scene/spray.js`) |
+| Fresnel, depth-based colour, light through thin lips | Tessendorf; Sea of Thieves; Atlas | Yes, simplified |
+| Full FFT ocean with thousands of components | Tessendorf; Crest; WaveWorks | No: 20 components; a WebGPU FFT would be the upgrade |
+| Wave packets / wavelets, reflection off groynes | Jeschke et al. (2017-2020) | No |
+| True overturning barrels | Thurey (2007) particle sheets; FLIP/APIC in film | No: a height field cannot overhang; lips lean but do not curl |
+| Bubbles, underwater view, Snell's window | Weta Loki; Atlas | No |
+
 ## Data sources
 
 | What | Source | Notes |
