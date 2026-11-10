@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#06121c" />
+    <title>Praia Nova — 3D surf forecast</title>
+    <meta name="description" content="See the waves before you go: a 3D surf forecast for Praia Nova, Costa da Caparica, built from real bathymetry, satellite imagery and live swell data." />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="scene"></div>
+
+    <header class="panel" id="headline">
+      <p class="eyebrow" id="region">Costa da Caparica · Portugal</p>
+      <h1 id="beach-name">Praia Nova</h1>
+      <p class="when" id="when">—</p>
+      <div class="surf">
+        <span class="surf-height" id="surf-height">—</span>
+        <span class="surf-unit">m</span>
+        <div class="surf-text">
+          <strong id="surf-size">Loading</strong>
+          <span id="surf-detail"></span>
+        </div>
+      </div>
+      <div class="rating" id="rating" aria-label="Surf rating">
+        <span class="dots" id="rating-dots"></span>
+        <span id="rating-label"></span>
+      </div>
+    </header>
+
+    <aside class="panel" id="stats">
+      <div class="stat" id="stat-swell">
+        <span class="stat-label">Swell</span>
+        <span class="stat-value" id="swell-value">—</span>
+        <span class="stat-sub" id="swell-sub"></span>
+      </div>
+      <div class="stat" id="stat-wind">
+        <span class="stat-label">Wind</span>
+        <span class="stat-value" id="wind-value">—</span>
+        <span class="stat-sub" id="wind-sub"></span>
+      </div>
+      <p class="stat-note" id="wind-note"></p>
+      <div class="stat" id="stat-tide">
+        <span class="stat-label">Tide</span>
+        <span class="stat-value" id="tide-value">—</span>
+        <span class="stat-sub" id="tide-sub"></span>
+      </div>
+      <div class="stat" id="stat-water">
+        <span class="stat-label">Water</span>
+        <span class="stat-value" id="water-value">—</span>
+        <span class="stat-sub" id="water-sub"></span>
+      </div>
+      <div class="compass-wrap">
+        <svg id="compass" viewBox="-60 -60 120 120" role="img" aria-label="Swell and wind direction relative to the beach"></svg>
+        <ul class="legend">
+          <li><i class="key swell"></i>Swell</li>
+          <li><i class="key wind"></i>Wind</li>
+          <li><i class="key sand"></i>Beach</li>
+        </ul>
+      </div>
+    </aside>
+
+    <footer id="dock">
+      <div class="toolbar">
+        <div class="seg" id="cameras" role="group" aria-label="Camera"></div>
+        <div class="seg" id="tools" role="group" aria-label="View options">
+          <a id="btn-webcam" class="seg-link" target="_blank" rel="noopener" hidden>Live cam ↗</a>
+          <button type="button" id="btn-wind" title="Which wind forecast to use: Auto uses the high-resolution regional model for the next two days and Google's WeatherNext 2 AI ensemble beyond">Wind: Auto</button>
+          <button type="button" id="btn-play" title="Play through the forecast (space)">▶ Play week</button>
+          <button type="button" id="btn-exag" title="Exaggerate wave height so it reads from far away">Waves ×1</button>
+        </div>
+      </div>
+      <div class="panel timeline-panel">
+        <div class="days" id="days"></div>
+        <canvas id="timeline" height="84" aria-label="Seven-day surf height. Drag to scrub."></canvas>
+      </div>
+      <p class="credits" id="credits"></p>
+    </footer>
+
+    <div id="pov" class="pov" hidden></div>
+    <div id="notice" class="notice" hidden></div>
+    <div id="loading" class="loading">
+      <div class="loading-card">
+        <div class="swell-loader"><span></span><span></span><span></span></div>
+        <p id="loading-text">Reading the seabed…</p>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,75 @@
+{
+  "id": "praia-nova",
+  "name": "Praia Nova",
+  "lat": 38.6373,
+  "lon": -9.2356,
+  "seawardBearing": 238,
+  "domain": {
+    "offshore": 1100,
+    "inland": 400,
+    "alongshore": 1500
+  },
+  "grid": {
+    "nx": 512,
+    "nz": 512,
+    "dx": 2.935420743639922,
+    "dz": 2.935420743639922
+  },
+  "heightEncoding": "int16 little-endian, centimetres above mean sea level, index = j * nx + i",
+  "maskEncoding": "uint8: 0 sea, 1 land, 2 groyne",
+  "heightRange": [
+    -12.52,
+    18.46
+  ],
+  "refDepth": 16.4,
+  "groynes": [
+    {
+      "z": -446.2,
+      "tipX": -96.1
+    },
+    {
+      "z": -174.7,
+      "tipX": -116.6
+    },
+    {
+      "z": 162.9,
+      "tipX": -60.9
+    }
+  ],
+  "profile": [
+    {
+      "distance": 50,
+      "depth": 1.05
+    },
+    {
+      "distance": 100,
+      "depth": 1.67
+    },
+    {
+      "distance": 200,
+      "depth": 2.79
+    },
+    {
+      "distance": 300,
+      "depth": 3.41
+    },
+    {
+      "distance": 500,
+      "depth": 4.38
+    },
+    {
+      "distance": 800,
+      "depth": 9.26
+    },
+    {
+      "distance": 1000,
+      "depth": 10.97
+    }
+  ],
+  "bakedAt": "2026-11-09T19:53:03.699Z",
+  "sources": {
+    "imagery": "Esri World Imagery (waterline, groynes and foam traced from tiles at zoom 17)",
+    "bathymetry": "EMODnet Bathymetry DTM, 1/16 arc-minute",
+    "nearshore": "Dean equilibrium profile blended with EMODnet; bars estimated from satellite foam"
+  }
+}

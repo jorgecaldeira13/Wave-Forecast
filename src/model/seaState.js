@@ -1,0 +1,147 @@
+// Turns one forecast hour into what you would actually see at the beach:
+// the solved wave fields for the renderer plus a human summary.
+
+import {
+  makeSolverGrid,
+  transformToBoundary,
+  solveTrain,
+  measureSurf,
+  runup,
+  centreProfile,
+  quickBreakHeight,
+} from '../physics/nearshore.js';
+
+const DEG = Math.PI / 180;
+const wrap180 = (a) => ((((a + 180) % 360) + 360) % 360) - 180;
+
+export function buildContext(terrain) {
+  const grid = makeSolverGrid(terrain, 256);
+  return {
+    grid,
+    profile: centreProfile(grid),
+    refDepth: terrain.meta.refDepth,
+    seawardBearing: terrain.meta.seawardBearing,
+  };
+}
+
+/** Wave trains at the offshore edge of the patch, strongest first. */
+function boundaryTrains(ctx, hour) {
+  const edgeDepth = Math.max(ctx.profile.boundaryDepth + hour.tide, 2);
+  return hour.trains
+    .map((train) => ({
+      ...transformToBoundary(train, ctx.refDepth, edgeDepth, ctx.seawardBearing),
+      kind: train.kind,
+      offshore: train,
+    }))
+    .filter((b) => b.height > 0.03)
+    .sort((a, b) => b.height ** 2 * b.period - a.height ** 2 * a.period);
+}
+
+/** How the wind sits relative to the beach. onshore: +1 from the sea, -1 from the land. */
+export function windRelation(wind, seawardBearing) {
+  if (!wind) return null;
+  const rel = wrap180(wind.direction - seawardBearing);
+  const onshore = Math.cos(rel * DEG);
+  let label;
+  if (wind.speed < 6) label = 'Glassy';
+  else if (onshore < -0.7) label = 'Offshore';
+  else if (onshore < -0.25) label = 'Cross-offshore';
+  else if (onshore <= 0.25) label = 'Cross-shore';
+  else if (onshore <= 0.7) label = 'Cross-onshore';
+  else label = 'Onshore';
+  return { onshore, label, rel };
+}
+
+/** 0 = groomed lines, 1 = blown-out mess. Drives the look of the water. */
+function messiness(wind, relation) {
+  if (!wind || !relation) return 0.12;
+  const v = wind.speed;
+  if (v < 6) return 0.02;
+  const side = relation.onshore > 0 ? 1 : 0.25 + 0.2 * (1 - Math.abs(relation.onshore));
+  return Math.min(1, (v / 38) * side + (v > 45 ? 0.2 : 0));
+}
+
+export function describeSize(h) {
+  if (h < 0.25) return 'Flat';
+  if (h < 0.5) return 'Ankle to knee high';
+  if (h < 0.85) return 'Knee to waist high';
+  if (h < 1.2) return 'Waist to chest high';
+  if (h < 1.6) return 'Chest to head high';
+  if (h < 2.2) return 'Head high to overhead';
+  if (h < 3.0) return 'Well overhead';
+  return 'Double overhead or bigger';
+}
+
+const RATING_LABELS = ['Flat', 'Poor', 'Poor to fair', 'Fair', 'Good', 'Very good', 'Epic'];
+
+/** A simple, explainable 0..5 score. Heuristic: tune it to taste. */
+export function rate(surfHeight, period, wind, relation) {
+  const h = surfHeight;
+  const seg = (x, x0, x1, y0, y1) => y0 + ((y1 - y0) * Math.min(1, Math.max(0, (x - x0) / (x1 - x0))));
+  let score;
+  if (h < 0.3) score = 0;
+  else if (h < 0.6) score = seg(h, 0.3, 0.6, 0.6, 1.6);
+  else if (h < 1.0) score = seg(h, 0.6, 1.0, 1.6, 3.0);
+  else if (h < 2.0) score = seg(h, 1.0, 2.0, 3.0, 3.5);
+  else if (h < 3.0) score = seg(h, 2.0, 3.0, 3.5, 2.4); // a beach break starts closing out
+  else score = seg(h, 3.0, 4.5, 2.4, 1.0);
+  if (score > 0) {
+    if (period >= 13) score += 0.6;
+    else if (period >= 10) score += 0.3;
+    else if (period < 7) score -= 0.8;
+    if (wind && relation) {
+      const v = wind.speed;
+      if (v < 6) score += 0.7;
+      else if (relation.onshore < -0.25) score += v < 25 ? 0.7 : v < 40 ? 0.3 : -0.5;
+      else if (relation.onshore <= 0.25) score -= 0.4 * (v / 20);
+      else score -= Math.min(2.5, (v / 12) * relation.onshore);
+    }
+  }
+  score = Math.round(Math.min(5, Math.max(0, score)) * 2) / 2;
+  const label = h < 0.3 ? RATING_LABELS[0] : RATING_LABELS[Math.min(6, Math.max(1, Math.round(score) + 1))];
+  return { score, label };
+}
+
+/** Fast summary for every hour of the week (1-D profile, no field solve). */
+export function quickSeaState(ctx, hour) {
+  const trains = boundaryTrains(ctx, hour);
+  if (!trains.length) return { surfHeight: 0, rating: { score: 0, label: 'Flat' } };
+  const combined = Math.hypot(...trains.map((t) => t.height));
+  const surfHeight = quickBreakHeight(ctx.profile, hour.tide, { ...trains[0], height: combined });
+  const relation = windRelation(hour.wind, ctx.seawardBearing);
+  return { surfHeight, rating: rate(surfHeight, trains[0].period, hour.wind, relation) };
+}
+
+/** Full solve for the hour being shown. */
+export function computeSeaState(ctx, hour) {
+  const trains = boundaryTrains(ctx, hour).slice(0, 2);
+  const relation = windRelation(hour.wind, ctx.seawardBearing);
+  const solved = trains.map((b) => ({ ...b, field: solveTrain(ctx.grid, hour.tide, b) }));
+  let surf = null, sets = null, wash = { setup: 0, swash: 0, r2: 0 };
+  if (solved.length) {
+    const primary = solved[0];
+    const combined = Math.hypot(...solved.map((t) => t.height));
+    surf = measureSurf(ctx.grid, primary.field, combined);
+    sets = measureSurf(ctx.grid, primary.field, combined * 1.3);
+    wash = runup(combined, primary.period);
+  }
+  const surfHeight = surf?.height ?? 0;
+  return {
+    hour,
+    trains: solved,
+    surf,
+    setHeight: sets?.height ?? surfHeight,
+    setBreakX: sets?.breakX ?? surf?.breakX ?? -120,
+    surfHeight,
+    sizeLabel: describeSize(surfHeight),
+    runup: wash,
+    wind: hour.wind,
+    windRelation: relation,
+    mess: messiness(hour.wind, relation),
+    rating: rate(surfHeight, solved[0]?.period ?? 0, hour.wind, relation),
+    tide: hour.tide,
+  };
+}
+
+const COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+export const compassPoint = (deg) => COMPASS[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];

@@ -1,0 +1,187 @@
+// GLSL shared by the sky, the terrain and the water.
+
+export const COMMON = /* glsl */ `
+precision highp float;
+precision highp sampler2D;
+
+uniform vec3 uSkyZenith;
+uniform vec3 uSkyHorizon;
+uniform vec3 uSunDir;
+uniform vec3 uSunColor;
+uniform float uSunStrength;
+uniform float uSunGlow;
+uniform float uAmbient;
+uniform float uFogDensity;
+
+vec3 skyColor(vec3 d) {
+  float h = clamp(d.y, 0.0, 1.0);
+  vec3 col = mix(uSkyHorizon, uSkyZenith, pow(h, 0.42));
+  float s = max(dot(d, uSunDir), 0.0);
+  col += uSunColor * uSunStrength * uSunGlow * (pow(s, 6.0) * 0.10 + pow(s, 48.0) * 0.28);
+  return col;
+}
+
+vec3 applyFog(vec3 col, vec3 viewRay, float dist) {
+  float f = 1.0 - exp(-dist * uFogDensity);
+  vec3 dir = normalize(vec3(viewRay.x, max(viewRay.y, 0.0) * 0.4 + 0.015, viewRay.z));
+  return mix(col, skyColor(dir), f);
+}
+
+// Bilinear read of a float texture whose texels sit on grid nodes.
+vec4 fetchGrid(sampler2D tex, vec2 uv) {
+  ivec2 size = textureSize(tex, 0);
+  vec2 p = clamp(uv, 0.0, 1.0) * vec2(size - 1);
+  ivec2 i = ivec2(floor(p));
+  vec2 f = p - vec2(i);
+  ivec2 mx = size - 1;
+  vec4 a = texelFetch(tex, min(i, mx), 0);
+  vec4 b = texelFetch(tex, min(i + ivec2(1, 0), mx), 0);
+  vec4 c = texelFetch(tex, min(i + ivec2(0, 1), mx), 0);
+  vec4 d = texelFetch(tex, min(i + ivec2(1, 1), mx), 0);
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+`;
+
+// The moving sea surface. Everything here is driven by fields solved on the
+// CPU (src/physics/nearshore.js): the shader only animates them.
+export const WAVES = /* glsl */ `
+uniform sampler2D uFieldA;   // primary train:   travel time, slowness x, slowness z, amplification
+uniform sampler2D uFieldA2;  // primary train:   breaking threshold, bore depth cap
+uniform sampler2D uFieldB;   // secondary train: travel time, slowness x, slowness z, amplification
+uniform sampler2D uBed;      // bed elevation (m), groyne mask
+uniform sampler2D uNoise;
+uniform vec4 uDomain;        // x0, z0, sizeX, sizeZ of the modelled patch
+uniform float uTime;
+uniform float uTide;
+uniform float uExag;
+uniform vec2 uEdgeH;         // wave height of each train at the offshore edge
+uniform vec2 uPeriod;
+uniform vec2 uSwash;         // wave setup, swash height
+uniform float uMess;         // 0 groomed .. 1 blown out
+
+const float TAU = 6.28318530718;
+const float GAMMA_BORE = 0.5;
+
+// Waves arrive in sets and peak in places along the crest. Built from sines
+// only, so src/model/surface.js can reproduce it exactly on the CPU.
+float setFactor(float n, float z) {
+  float group = 0.6 * sin(n * 0.83 + 1.7) + 0.4 * sin(n * 0.31 + 0.4);
+  float peak = 0.5 * sin(z / 97.0 + n * 2.4) + 0.3 * sin(z / 41.0 - n * 1.3 + 1.0) + 0.2 * sin(z / 173.0 + n * 4.1);
+  return clamp(0.84 + 0.25 * group + 0.24 * peak, 0.3, 1.45);
+}
+
+// One wave over phase q in [0,1): crest at q = 0. 'peaked' sharpens the crest
+// and flattens the trough (shallow water), 'skew' pitches the face forward.
+float waveShape(float q, float peaked, float skew) {
+  float w = q - skew * (1.0 - cos(TAU * q)) / TAU;
+  float c = 0.5 + 0.5 * cos(TAU * w);
+  float n = 1.0 + 2.6 * peaked;
+  float mean = 0.5 * pow(n, -0.45);
+  return (pow(c, n) - mean) * 2.0;
+}
+
+struct Surf {
+  float eta;     // surface elevation above the tide level (m, exaggeration applied)
+  vec2 grad;     // d(eta)/d(x,z)
+  float foam;    // 0..1 white water
+  float film;    // water thickness above the bed (m)
+  float still;   // still-water depth (m)
+  float face;    // 0..1 how steep and tall the wave face is here
+  float slope;   // surface slope along the direction of travel: + on the front face
+};
+
+Surf surface(vec2 p, bool detail) {
+  Surf s;
+  vec2 uv = (p - uDomain.xy) / uDomain.zw;
+  vec4 bedInfo = fetchGrid(uBed, uv);
+  float bed = bedInfo.r;
+  float still = uTide - bed;
+  float h = max(still, 0.05);
+  vec4 a = fetchGrid(uFieldA, uv);
+  vec4 a2 = fetchGrid(uFieldA2, uv);
+  vec4 b = fetchGrid(uFieldB, uv);
+
+  // waves fade to a flat sea outside the modelled patch
+  vec2 e = min(uv, 1.0 - uv) * uDomain.zw;
+  float inside = smoothstep(0.0, 90.0, e.x) * smoothstep(0.0, 90.0, e.y);
+  if (uv.x > 0.5) inside = smoothstep(0.0, 90.0, e.y);
+
+  float jitter = (texture(uNoise, p / 330.0).r - 0.5) * uMess;
+
+  // ---- primary train -------------------------------------------------------
+  float T = uPeriod.x;
+  float ph = (uTime - a.x) / T + jitter * 0.4;
+  float n = floor(ph);
+  float q = ph - n;
+  float s0 = setFactor(n, p.y);        // the wave that just passed
+  float s1 = setFactor(n + 1.0, p.y);  // the wave about to arrive
+  float blend = smoothstep(0.3, 0.7, q);
+  float sf = mix(s0, s1, blend);
+  float crit = max(a2.x, 0.02);
+  float br0 = smoothstep(0.93, 1.08, uEdgeH.x * s0 / crit);
+  float br1 = smoothstep(0.93, 1.08, uEdgeH.x * s1 / crit);
+  float broken = mix(br0, br1, blend);
+  float Hu = a.w * uEdgeH.x * sf;
+  float Hl = GAMMA_BORE * max(a2.y, 0.0);
+  float H = mix(Hu, min(Hu, Hl), broken);
+  H = min(H, 0.95 * h) * inside;
+  float steep = clamp(H / (0.78 * h), 0.0, 1.0);
+  float peaked = steep * (1.0 - 0.35 * uMess);
+  float skew = mix(0.12 + 0.5 * steep, 0.72, broken);
+  float shape = waveShape(q, peaked, skew);
+  float dshape = (waveShape(q + 0.012, peaked, skew) - waveShape(q - 0.012, peaked, skew)) / 0.024;
+  float eta = 0.5 * H * shape;
+  vec2 grad = 0.5 * H * dshape * (-a.yz / T);
+
+  // ---- secondary train -----------------------------------------------------
+  float TB = uPeriod.y;
+  float phB = (uTime - b.x) / TB + jitter * 0.6;
+  float nB = floor(phB);
+  float qB = phB - nB;
+  float sB = mix(setFactor(nB + 40.0, p.y + 300.0), setFactor(nB + 41.0, p.y + 300.0), smoothstep(0.3, 0.7, qB));
+  float HB = min(b.w * uEdgeH.y * sB, 0.42 * h) * inside;
+  float steepB = clamp(HB / (0.6 * h), 0.0, 1.0);
+  float shapeB = waveShape(qB, steepB, 0.1 + 0.4 * steepB);
+  float dshapeB = (waveShape(qB + 0.012, steepB, 0.3) - waveShape(qB - 0.012, steepB, 0.3)) / 0.024;
+  eta += 0.5 * HB * shapeB;
+  grad += 0.5 * HB * dshapeB * (-b.yz / TB);
+
+  // ---- setup and swash at the water's edge --------------------------------
+  float nearEdge = 1.0 - smoothstep(0.0, 0.7, still);
+  float sw = (1.0 - q) * (1.0 - q);
+  float beachOnly = 1.0 - smoothstep(0.05, 0.6, bedInfo.g);  // no run-up on the rock groynes
+  eta += inside * beachOnly * (uSwash.x * (1.0 - smoothstep(0.0, 2.5, still)) + 0.5 * uSwash.y * sw * s0 * nearEdge);
+
+  s.eta = eta * uExag;
+  s.grad = grad * uExag;
+  s.still = still;
+  s.film = uTide + s.eta - bed;
+  s.face = steep * smoothstep(0.55, 1.0, q) * (1.0 - broken);
+  s.slope = 0.5 * H * dshape * length(a.yz) / T * uExag;
+  s.foam = 0.0;
+
+  if (detail) {
+    float dissip = smoothstep(0.5, 0.88, a2.y / h);
+    float big = smoothstep(0.04, 0.3, H);
+    float roller = br1 * dissip * smoothstep(0.78, 0.94, q);
+    float lip = br1 * (1.0 - br0) * smoothstep(0.9, 1.0, q);           // first white at the crest
+    float trail = br0 * 0.82 * exp(-q * T / 4.2) * mix(0.4, 1.0, dissip);
+    float foam = max(max(roller, lip), trail) * big * inside;
+    foam += 0.25 * uMess * smoothstep(0.75, 1.0, shapeB * 0.5 + 0.5) * steepB; // whitecaps on wind chop
+    // lacy foam: ridged noise leaves a net of white lines as the foam thins out
+    vec2 fuv = p * 0.05 + vec2(uTime * 0.012, 0.0);
+    float n1 = texture(uNoise, fuv).g;
+    float n2 = texture(uNoise, fuv * 3.3 + 0.37).b;
+    float n3 = texture(uNoise, fuv * 11.0 + 0.11).r;
+    float lace = (1.0 - abs(2.0 * n1 - 1.0)) * 0.5 + (1.0 - abs(2.0 * n2 - 1.0)) * 0.32 + n3 * 0.18;
+    float cut = 1.0 - foam;
+    foam = smoothstep(cut - 0.08, cut + 0.22, lace + 0.5 * foam * foam) * smoothstep(0.0, 0.08, foam);
+    float edgeLace = (1.0 - smoothstep(0.0, 0.16, s.film)) * smoothstep(-0.02, 0.02, s.film);
+    foam = max(foam, edgeLace * (0.55 + 0.45 * lace) * inside);
+    s.foam = foam;
+    // turbulence on the white water
+    s.grad += (texture(uNoise, p * 0.21 + uTime * 0.05).rg - 0.5) * 0.9 * foam;
+  }
+  return s;
+}
+`;
