@@ -12,13 +12,30 @@ uniform float uSunStrength;
 uniform float uSunGlow;
 uniform float uAmbient;
 uniform float uFogDensity;
+uniform sampler2D uSkyNoise;
+uniform float uSkyTime;
+uniform float uCloud;
+
+// Drifting cloud cover, so the sky (and its reflection in the water and on wet
+// sand) has structure. uCloud is the forecast cloud fraction.
+float cloudCover(vec3 d) {
+  vec2 uv = d.xz / (d.y + 0.2) * 0.06 + vec2(uSkyTime * 0.0012, uSkyTime * 0.0004);
+  float n = texture(uSkyNoise, uv).r * 0.55 + texture(uSkyNoise, uv * 2.9 + 0.31).g * 0.3 + texture(uSkyNoise, uv * 8.3 + 0.7).b * 0.15;
+  float edge = mix(0.74, 0.34, uCloud);
+  return smoothstep(edge, edge + 0.2, n) * smoothstep(0.0, 0.1, d.y);
+}
 
 vec3 skyColor(vec3 d) {
   float h = clamp(d.y, 0.0, 1.0);
   vec3 col = mix(uSkyHorizon, uSkyZenith, pow(h, 0.42));
+  // haze: the sky whitens towards the horizon
+  col = mix(col, uSkyHorizon * 1.08 + 0.03, exp(-h * 9.0) * 0.55);
   float s = max(dot(d, uSunDir), 0.0);
   col += uSunColor * uSunStrength * uSunGlow * (pow(s, 6.0) * 0.10 + pow(s, 48.0) * 0.28);
-  return col;
+  float c = cloudCover(d);
+  float lum = dot(uSkyHorizon, vec3(0.3, 0.55, 0.15));
+  vec3 cloudCol = mix(vec3(lum) * 0.85, uSunColor * uSunStrength * 0.75 + uSkyHorizon * 0.5, 0.55 + 0.35 * pow(s, 3.0));
+  return mix(col, cloudCol, c * 0.9);
 }
 
 vec3 applyFog(vec3 col, vec3 viewRay, float dist) {
@@ -67,7 +84,21 @@ uniform vec4 uEnv[6];        // wave-group envelope: d-omega, alongshore k, phas
 uniform sampler2D uFoamMap;  // simulated foam that lingers, drifts and fades
 uniform vec4 uFoamRect;      // x0, z0, sizeX, sizeZ covered by the foam map
 
+uniform vec3 uWind;           // unit direction the wind blows towards (x, z) and speed in m/s
+uniform sampler2D uTile;      // live ocean patch: height, slope x, slope z
+uniform float uTileSize;
+
 const float TAU = 6.28318530718;
+
+// Read the ocean patch, turned so its waves run downwind. Returns height and world-space slopes.
+vec3 tileSample(vec2 p, float size) {
+  vec2 w = uWind.xy;
+  vec2 q = vec2(dot(p, w), dot(p, vec2(-w.y, w.x))) / size;
+  vec3 t = texture(uTile, q).rgb;
+  return vec3(t.r * size / uTileSize, w * t.g + vec2(-w.y, w.x) * t.b);
+}
+float chopAmount() { return 0.2 + 1.1 * clamp(uWind.z / 11.0, 0.0, 1.0); }
+
 const float GAMMA_BORE = 0.5;
 
 // Waves arrive in sets because a swell is a narrow band of frequencies and
@@ -185,6 +216,9 @@ Surf surface(vec2 p, bool detail) {
     gradS += -amp * sin(phs) * c.xy;
   }
   grad += gradS;
+
+  // ---- fine texture of the sea surface from the live ocean patch -----------
+  eta += min(tileSample(p, uTileSize).x * chopAmount() * 1.6, 0.25 * h) * smoothstep(0.0, 0.5, h);
 
   // ---- setup and swash at the water's edge --------------------------------
   float nearEdge = 1.0 - smoothstep(0.0, 0.7, still);

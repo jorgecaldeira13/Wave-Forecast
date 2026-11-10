@@ -68,8 +68,10 @@ void main() {
   vec3 col = albedo * (uAmbient * 1.15 + uSunStrength * (0.32 + 0.5 * ndl)) * lightCol;
   // a little sky sheen on wet sand
   vec3 V = normalize(cameraPosition - vWorld);
-  float fres = pow(1.0 - max(dot(N, V), 0.0), 4.0);
-  col = mix(col, skyColor(reflect(-V, N)), 0.35 * fres * wet * above);
+  // wet sand is a dark mirror: it shows the sky, most strongly at a low angle
+  float mirror = (0.06 + 0.94 * pow(1.0 - max(dot(N, V), 0.0), 5.0)) * wet * above;
+  float gloss = 1.0 - smoothstep(wetTop - 0.25, wetTop + 0.3, y);
+  col = mix(col, skyColor(reflect(-V, N)), clamp(mirror * (0.5 + 0.5 * gloss), 0.0, 0.85));
 
   col = applyFog(col, -V, length(cameraPosition - vWorld));
   gl_FragColor = vec4(col, 1.0);
