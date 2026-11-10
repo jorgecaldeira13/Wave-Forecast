@@ -1,0 +1,75 @@
+{
+  "note": "How often each 10 m cell showed white water in recent clear Sentinel-2 images. Used by the terrain bake to place sandbars.",
+  "source": "Copernicus Sentinel-2 L2A via Earth Search (element84)",
+  "grid": {
+    "nx": 151,
+    "nz": 151,
+    "cell": 10,
+    "x0": -1100,
+    "z0": -750
+  },
+  "encoding": "uint8, 255 = white water in every scene, index = j * nx + i",
+  "scenes": [
+    {
+      "id": "S2B_29SMC_20261102_0_L2A",
+      "date": "2026-11-02",
+      "foamCells": 227
+    },
+    {
+      "id": "S2C_29SMC_20261028_0_L2A",
+      "date": "2026-10-28",
+      "foamCells": 342
+    },
+    {
+      "id": "S2B_29SMC_20261023_0_L2A",
+      "date": "2026-10-23",
+      "foamCells": 414
+    },
+    {
+      "id": "S2C_29SMC_20261018_1_L2A",
+      "date": "2026-10-18",
+      "foamCells": 93
+    },
+    {
+      "id": "S2C_29SMC_20261015_0_L2A",
+      "date": "2026-10-15",
+      "foamCells": 315
+    },
+    {
+      "id": "S2C_29SMC_20261008_0_L2A",
+      "date": "2026-10-08",
+      "foamCells": 111
+    },
+    {
+      "id": "S2A_29SMC_20260920_1_L2A",
+      "date": "2026-09-20",
+      "foamCells": 58
+    },
+    {
+      "id": "S2A_29SMC_20260917_0_L2A",
+      "date": "2026-09-17",
+      "foamCells": 154
+    },
+    {
+      "id": "S2A_29SMC_20260907_0_L2A",
+      "date": "2026-09-07",
+      "foamCells": 371
+    },
+    {
+      "id": "S2A_29SMC_20260831_1_L2A",
+      "date": "2026-08-31",
+      "foamCells": 211
+    },
+    {
+      "id": "S2C_29SMC_20260829_0_L2A",
+      "date": "2026-08-29",
+      "foamCells": 129
+    },
+    {
+      "id": "S2A_29SMC_20260821_1_L2A",
+      "date": "2026-08-21",
+      "foamCells": 207
+    }
+  ],
+  "updatedAt": "2026-11-10T18:53:13.426Z"
+}

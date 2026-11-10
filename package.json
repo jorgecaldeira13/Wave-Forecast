@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "bake": "node scripts/bake-beach.mjs",
+    "sentinel": "node scripts/sentinel-bars.mjs",
     "test": "node --test"
   },
   "dependencies": {

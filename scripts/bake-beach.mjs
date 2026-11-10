@@ -13,7 +13,7 @@
 //
 // Behind an HTTPS proxy run with NODE_USE_ENV_PROXY=1.
 
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
@@ -315,6 +315,28 @@ const dLand = distanceTo(isSea); // metres inland of the beach line
 const dGroyne = distanceTo(Array.from(mask, (m) => m === 2));
 
 // 6. Foam density from the satellite: persistent white water marks the bars.
+//    Prefer the Sentinel-2 map (many recent days, see scripts/sentinel-bars.mjs);
+//    fall back to the single high-resolution photo.
+let barSource = 'single satellite photo (Esri)';
+try {
+  const dir = path.join(ROOT, 'public', 'data', beach.id);
+  const info = JSON.parse(await readFile(path.join(dir, 'sentinel.json'), 'utf8'));
+  const freq = await readFile(path.join(dir, 'sentinel-foam.bin'));
+  const g = info.grid;
+  for (let j = 0; j < NZ; j++) {
+    for (let i = 0; i < NX; i++) {
+      const fi = Math.min(g.nx - 1.001, Math.max(0, (xAt(i) - g.x0) / g.cell));
+      const fj = Math.min(g.nz - 1.001, Math.max(0, (zAt(j) - g.z0) / g.cell));
+      const i0 = fi | 0, j0 = fj | 0, u = fi - i0, v = fj - j0;
+      const at = (a, b) => freq[b * g.nx + a] / 255;
+      const val = at(i0, j0) * (1 - u) * (1 - v) + at(i0 + 1, j0) * u * (1 - v) + at(i0, j0 + 1) * (1 - u) * v + at(i0 + 1, j0 + 1) * u * v;
+      // white water on a third of the days is already a strong, persistent bar
+      foam[idx(i, j)] = mask[idx(i, j)] === 0 ? Math.min(1, val * 2.5) : 0;
+    }
+  }
+  barSource = `Sentinel-2 white-water frequency, ${info.scenes.length} scenes ${info.scenes[info.scenes.length - 1].date} to ${info.scenes[0].date}`;
+  console.log('bars from', barSource);
+} catch { console.log('no Sentinel-2 map found: bars from the single photo'); }
 const foamSmooth = boxBlur(foam, Math.round(18 / DX), 2);
 const foamByDist = new Map();
 for (let k = 0; k < mask.length; k++) {
@@ -433,6 +455,7 @@ const meta = {
     imagery: 'Esri World Imagery (waterline, groynes and foam traced from tiles at zoom 17)',
     bathymetry: 'EMODnet Bathymetry DTM, 1/16 arc-minute',
     nearshore: 'Dean equilibrium profile blended with EMODnet; bars estimated from satellite foam',
+    bars: barSource,
   },
 };
 await writeFile(path.join(outDir, 'meta.json'), JSON.stringify(meta, null, 2) + '\n');

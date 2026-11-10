@@ -39,11 +39,11 @@
   "profile": [
     {
       "distance": 50,
-      "depth": 1.05
+      "depth": 1.12
     },
     {
       "distance": 100,
-      "depth": 1.67
+      "depth": 1.72
     },
     {
       "distance": 200,
@@ -51,7 +51,7 @@
     },
     {
       "distance": 300,
-      "depth": 3.41
+      "depth": 3.4
     },
     {
       "distance": 500,
@@ -66,10 +66,11 @@
       "depth": 10.97
     }
   ],
-  "bakedAt": "2026-11-09T19:53:03.699Z",
+  "bakedAt": "2026-11-10T18:53:29.983Z",
   "sources": {
     "imagery": "Esri World Imagery (waterline, groynes and foam traced from tiles at zoom 17)",
     "bathymetry": "EMODnet Bathymetry DTM, 1/16 arc-minute",
-    "nearshore": "Dean equilibrium profile blended with EMODnet; bars estimated from satellite foam"
+    "nearshore": "Dean equilibrium profile blended with EMODnet; bars estimated from satellite foam",
+    "bars": "Sentinel-2 white-water frequency, 12 scenes 2026-08-21 to 2026-11-02"
   }
 }
