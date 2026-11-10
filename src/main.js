@@ -6,6 +6,7 @@ import { buildContext, computeSeaState, quickSeaState } from './model/seaState.j
 import { Viewer, CAMERA_PRESETS } from './scene/viewer.js';
 import { Hud } from './ui/hud.js';
 import { Timeline } from './ui/timeline.js';
+import { SurfGame } from './game/surfGame.js';
 
 const params = new URLSearchParams(location.search);
 const beach = BEACHES[params.get('beach')] ?? BEACHES[DEFAULT_BEACH];
@@ -129,6 +130,26 @@ async function start() {
     if (info) el.textContent = info;
   };
 
+  // surf trainer
+  const game = new SurfGame(viewer, { pad: $('game-pad'), coach: $('game-coach'), score: $('game-score'), flash: $('game-flash') });
+  const setGame = (on) => {
+    if (playTimer) setPlaying(false);
+    document.body.classList.toggle('playing', on);
+    $('game').hidden = !on;
+    if (on) game.start(); else { game.auto = false; $('game-demo').setAttribute('aria-pressed', 'false'); game.stop(); markCam(); }
+  };
+  $('btn-surf').addEventListener('click', () => setGame(true));
+  $('game-exit').addEventListener('click', () => setGame(false));
+  $('game-stance').addEventListener('click', () => {
+    game.setStance(game.stance === 'regular' ? 'goofy' : 'regular');
+    $('game-stance').textContent = game.stance === 'regular' ? 'Regular' : 'Goofy';
+  });
+  $('game-demo').addEventListener('click', () => {
+    game.auto = !game.auto;
+    $('game-demo').setAttribute('aria-pressed', String(game.auto));
+  });
+  window.__game = game;
+
   // play through the week
   let playTimer = null;
   const setPlaying = (on) => {
@@ -164,6 +185,7 @@ async function start() {
   let startIndex = nearestHourIndex(hours, new Date());
   if (wanted !== null) startIndex = /^\d+$/.test(wanted) ? Math.min(hours.length - 1, Number(wanted)) : nearestHourIndex(hours, new Date(wanted));
   select(startIndex);
+  if (params.has('surf')) requestAnimationFrame(() => requestAnimationFrame(() => { setGame(true); if (params.get('surf') === 'demo') { game.auto = true; $('game-demo').setAttribute('aria-pressed', 'true'); } }));
   if (campos?.length === 6) {
     requestAnimationFrame(() => requestAnimationFrame(() => {
       viewer.camera.position.set(campos[0], campos[1], campos[2]);

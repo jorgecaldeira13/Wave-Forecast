@@ -103,5 +103,21 @@ export function makeSurfaceSampler(grid, state) {
     if (b) HB = Math.min(sample(b.field.K, i, j, u, v) * b.height, 0.42 * h);
     return Math.hypot(HA, HB);
   };
+  // ---- extras for things that ride the wave (the surf trainer) ----------------
+  const at = (arr, x, z) => {
+    const fi = clamp((x - x0) / dx, 0, nx - 1.001), fj = clamp((z - z0) / dz, 0, nz - 1.001);
+    const i = fi | 0, j = fj | 0;
+    return sample(arr, i, j, fi - i, fj - j);
+  };
+  sampler.primary = a ? { period: a.period, height: a.height } : null;
+  /** Seconds a crest takes to get here from the offshore edge. */
+  sampler.tauAt = (x, z) => (a ? at(a.field.tau, x, z) : 0);
+  /** Speed of the wave here, m/s. */
+  sampler.speedAt = (x, z) => (a ? 1 / Math.max(Math.hypot(at(a.field.sx, x, z), at(a.field.sz, x, z)), 0.02) : 5);
+  sampler.depthAt = (x, z) => state.tide - at(bed, x, z);
+  /** Size of wave number n at alongshore z, as a fraction of the forecast height. */
+  sampler.factor = (n, z) => (a ? setFactor(n, z, a.period) : 0);
+  /** Has wave number n already broken by the time it reaches this point? */
+  sampler.brokenAt = (x, z, n) => !!a && a.height * setFactor(n, z, a.period) > at(a.field.Hcrit, x, z);
   return sampler;
 }
