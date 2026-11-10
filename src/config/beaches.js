@@ -25,10 +25,10 @@ export const BEACHES = {
     //   height:     multiplies the forecast wave height before it reaches the beach
     //   breakIndex: multiplies the height-to-depth ratio at which waves break
     calibration: { height: 1, breakIndex: 1 },
-    // Nearest public webcam (not ours; opens on its own site).
+    // Public webcam at this beach (not ours; opens on its own site).
     webcam: {
-      url: 'https://www.skylinewebcams.com/webcam/portugal/lisboa/almada/costa-da-caparica-praia-de-santo-antonio-beach.html',
-      note: 'SkylineWebcams, Praia de Santo António — about 1 km north of Praia Nova',
+      url: 'https://beachcam.meo.pt/livecams/costa-da-caparica-praia-nova/',
+      note: 'MEO Beachcam at Praia Nova itself',
     },
   },
 };

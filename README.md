@@ -34,6 +34,8 @@ No API keys are needed.
   surf rating; the white line is the tide; dark bands are night. `←` `→` step an hour, `space` plays.
 - **Cameras**: Drone, Line-up (you bob on the swell next to a surfer), Beach (a person stands at
   the swash line for scale), Groyne, Map. Drag to orbit, scroll or pinch to zoom.
+- **Free**: fly the camera yourself. Drag to move over the beach, right-drag or two fingers to
+  turn and tilt, scroll or pinch to zoom, `W A S D` to glide.
 - **On foot**: you, 1.7 m tall, standing on the sand. Drag to look around, tap the sand or the sea
   to go there (or walk with `W A S D`). Wade in and the readout tells you how deep you are and how
   big the waves are against your body; past your depth you float and rise with each wave.
@@ -187,6 +189,7 @@ The model is physically based but has never been tuned against Praia Nova itself
 | AI wind forecast | [Google WeatherNext 2 via Open-Meteo](https://open-meteo.com/en/docs/google-weathernext-api) | 64-member ensemble, 0.25°, free, no key |
 | Seabed depth | [EMODnet Bathymetry](https://emodnet.ec.europa.eu/en/bathymetry) | ~115 m grid |
 | Satellite imagery | Esri World Imagery | loaded live as map tiles, with attribution |
+| Sandbar positions | [Copernicus Sentinel-2](https://earth-search.aws.element84.com/v1) | free, no key; 10 m pixels, a pass every few days |
 
 **Google's AI forecast.** WeatherNext 2 is Google DeepMind's AI weather model. It forecasts the
 atmosphere (wind, temperature, pressure), not ocean waves, so here it drives the **wind**: the
@@ -196,6 +199,16 @@ grid with 6-hourly steps, so it cannot see a local sea breeze. That is why *Auto
 high-resolution regional model for the first two days and eases over to Google by day four, where
 the AI's skill on the larger weather pattern matters more. Waves still come from physical wave
 models (there is no public Google wave forecast).
+
+**Sandbars from Sentinel-2.** `npm run sentinel` reads the twelve most recent clear, surf-bearing
+Sentinel-2 images and counts how often each 10 m cell shows white water. Waves break on shallow
+bars, so that frequency map is a picture of the bars; `npm run bake` uses it to shape the nearshore
+seabed. The deploy workflow repeats this every Monday, so the seabed follows the sand as it moves.
+
+**Seabed 2030 / GEBCO — reviewed, already covered.** Seabed 2030 publishes its map as the GEBCO
+grid, at 15 arc-seconds (about 450 m). For European waters GEBCO is built from EMODnet, which this
+app already reads directly at about 115 m, four times finer. Adding GEBCO would add no detail at
+Praia Nova. It is the right fallback for beaches outside Europe, where EMODnet has no coverage.
 
 **SwellCloud (api.swellcloud.net) — reviewed, not used.** It serves the same underlying wave
 models Open-Meteo already gives us (GFS-Wave and Copernicus/CMEMS), with fewer variables (no swell
