@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { wavenumber, celerity, groupVelocity, deepWavelength } from '../src/physics/dispersion.js';
 import {
-  makeSolverGrid, transformToBoundary, solveTrain, measureSurf, quickBreakHeight, centreProfile, runup,
+  makeSolverGrid, windBreakingEffect, transformToBoundary, solveTrain, measureSurf, quickBreakHeight, centreProfile, runup,
 } from '../src/physics/nearshore.js';
 import { loadTerrainNode } from '../src/data/terrain-node.mjs';
-import { rate, windRelation, describeSize } from '../src/model/seaState.js';
+import { rate, windRelation, describeSize, crossingSeas } from '../src/model/seaState.js';
 import { normalise, summariseEnsemble, applyWindSource } from '../src/data/forecast.js';
 import { sunPosition } from '../src/data/sun.js';
 import { localToLatLon, latLonToLocal, BEACHES } from '../src/config/beaches.js';
@@ -134,4 +134,29 @@ test('wind source: regional first, Google AI further out, each covers for the ot
   assert.equal(hours[0].wind.source, 'google');
   applyWindSource(hours, 'local', ref);
   assert.equal(hours[2].wind.source, 'local');
+});
+
+test('wind and breaking: offshore holds waves up, onshore breaks them early (Douglass 1990 direction)', async () => {
+  const off = windBreakingEffect(-8), calm = windBreakingEffect(0), on = windBreakingEffect(8);
+  assert.ok(off.gamma > calm.gamma && calm.gamma > on.gamma);
+  assert.ok(on.s > 0 && off.s < 0);
+  close(calm.gamma, 0.78, 1e-9);
+  assert.ok(off.gamma < 0.78 * 1.2 && on.gamma > 0.78 * 0.8, 'the effect stays modest');
+  const terrain = await loadTerrainNode('praia-nova');
+  const grid = makeSolverGrid(terrain, 256);
+  const b = transformToBoundary({ height: 1.6, period: 12, direction: 270, spread: 20 }, terrain.meta.refDepth, centreProfile(grid).boundaryDepth + 0.3, terrain.meta.seawardBearing);
+  const at = (fx) => measureSurf(grid, solveTrain(grid, 0.3, b, fx.gamma), b.height, { windS: fx.s });
+  const sOff = at(off), sOn = at(on);
+  assert.ok(sOn.breakX < sOff.breakX, `onshore wind breaks further out (${sOn.breakX} vs ${sOff.breakX})`);
+  assert.ok(sOff.height / sOff.depth > sOn.height / sOn.depth, 'higher height-to-depth ratio with offshore wind');
+  assert.ok(sOff.iribarren > sOn.iribarren, 'offshore wind pushes the breaker type towards plunging');
+});
+
+test('crossing seas need a real wind sea at a real angle', () => {
+  const mk = (swellDir, seaDir, seaH) => ({ trains: [
+    { kind: 'swell', height: 2, period: 12, direction: swellDir },
+    { kind: 'wind', height: seaH, period: 6, direction: seaDir } ] });
+  assert.ok(crossingSeas(mk(270, 275, 1.5)) < 0.05, 'aligned systems do not cross');
+  assert.ok(crossingSeas(mk(270, 330, 1.5)) > 0.9, 'sixty degrees apart with a decent wind sea');
+  assert.equal(crossingSeas(mk(270, 330, 0.2)), 0, 'a tiny wind sea does not count');
 });

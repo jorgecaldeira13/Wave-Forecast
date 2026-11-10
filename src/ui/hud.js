@@ -69,6 +69,8 @@ export class Hud {
       bits.push(`${state.surf.breakerType} waves`);
       if (state.setHeight > h + 0.15) bits.push(`sets to ${state.setHeight.toFixed(1)} m`);
     } else bits.push('nothing breaking');
+    if (state.windEffect?.label) bits.push(state.windEffect.label);
+    if (state.crossing > 0.5) bits.push('crossing seas: lumpy surface');
     $('surf-detail').textContent = bits.join(' · ');
 
     const dots = $('rating-dots').children;
