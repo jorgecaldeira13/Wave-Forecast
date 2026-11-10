@@ -58,6 +58,11 @@ uniform vec2 uEdgeH;         // wave height of each train at the offshore edge
 uniform vec2 uPeriod;
 uniform vec2 uSwash;         // wave setup, swash height
 uniform float uMess;         // 0 groomed .. 1 blown out
+uniform float uWindS;        // -1 offshore .. +1 onshore (shifts breaker type)
+#define NC 20
+uniform vec4 uComp[NC];      // wind-sea plane waves: kx, kz, omega, amplitude
+uniform float uCompPh[NC];
+uniform float uCompN;
 
 const float TAU = 6.28318530718;
 const float GAMMA_BORE = 0.5;
@@ -88,6 +93,9 @@ struct Surf {
   float still;   // still-water depth (m)
   float face;    // 0..1 how steep and tall the wave face is here
   float slope;   // surface slope along the direction of travel: + on the front face
+  float steepSea; // slope of the wind-sea waves alone (whitecaps)
+  vec2 lean;      // horizontal throw of the crest (m): choppy peaks, pitching lips
+  float plunge;   // 0 spilling .. 1 plunging
 };
 
 Surf surface(vec2 p, bool detail) {
@@ -117,21 +125,29 @@ Surf surface(vec2 p, bool detail) {
   float s1 = setFactor(n + 1.0, p.y);  // the wave about to arrive
   float blend = smoothstep(0.3, 0.7, q);
   float sf = mix(s0, s1, blend);
+  // local surf-similarity (Iribarren) number: beach slope over the square root of
+  // deep-water steepness. Spilling < 0.5 < plunging < 3.3 < surging (Battjes 1974);
+  // onshore wind pushes it down, offshore wind up.
+  float dm = 14.0 / uDomain.z;
+  float slopeBed = abs(fetchGrid(uBed, uv + vec2(dm, 0.0)).r - fetchGrid(uBed, uv - vec2(dm, 0.0)).r) / 28.0;
+  float xi = slopeBed / sqrt(max(uEdgeH.x * sf, 0.05) / (1.56 * T * T)) * (1.0 - 0.5 * uWindS);
+  float plunge = smoothstep(0.38, 0.62, xi) * (1.0 - smoothstep(2.6, 3.6, xi));
+  float surge = smoothstep(2.6, 3.6, xi);
   float crit = max(a2.x, 0.02);
-  float br0 = smoothstep(0.93, 1.08, uEdgeH.x * s0 / crit);
-  float br1 = smoothstep(0.93, 1.08, uEdgeH.x * s1 / crit);
+  float br0 = smoothstep(0.93, 1.08, uEdgeH.x * s0 / crit) * (1.0 - surge);
+  float br1 = smoothstep(0.93, 1.08, uEdgeH.x * s1 / crit) * (1.0 - surge);
   float broken = mix(br0, br1, blend);
   float Hu = a.w * uEdgeH.x * sf;
   float Hl = GAMMA_BORE * max(a2.y, 0.0);
   float H = mix(Hu, min(Hu, Hl), broken);
   H = min(H, 0.95 * h) * inside;
   float steep = clamp(H / (0.78 * h), 0.0, 1.0);
-  float peaked = steep * (1.0 - 0.35 * uMess);
-  float skew = mix(0.12 + 0.5 * steep, 0.72, broken);
+  float peaked = min(1.0, steep * (1.0 - 0.35 * uMess) + 0.3 * plunge * steep * (1.0 - broken));
+  float skew = mix(0.12 + 0.5 * steep + 0.4 * plunge * steep * steep, mix(0.55, 0.9, plunge), broken);
   float shape = waveShape(q, peaked, skew);
   float dshape = (waveShape(q + 0.012, peaked, skew) - waveShape(q - 0.012, peaked, skew)) / 0.024;
   float eta = 0.5 * H * shape;
-  vec2 grad = 0.5 * H * dshape * (-a.yz / T);
+  vec2 grad = 0.5 * H * dshape * (-a.yz / T) * (1.0 + 0.5 * plunge * steep);
 
   // ---- secondary train -----------------------------------------------------
   float TB = uPeriod.y;
@@ -146,6 +162,20 @@ Surf surface(vec2 p, bool detail) {
   eta += 0.5 * HB * shapeB;
   grad += 0.5 * HB * dshapeB * (-b.yz / TB);
 
+  // ---- wind sea: JONSWAP/TMA plane waves, thinned out by depth -------------
+  vec2 gradS = vec2(0.0);
+  for (int i = 0; i < NC; i++) {
+    if (float(i) >= uCompN) break;
+    vec4 c = uComp[i];
+    float kk = length(c.xy);
+    float th = tanh(kk * h);
+    float amp = min(c.w * sqrt(th) * smoothstep(0.0, 0.6, h), 0.3 * h) * inside;
+    float phs = dot(c.xy, p) - c.z * uTime + uCompPh[i];
+    eta += amp * cos(phs);
+    gradS += -amp * sin(phs) * c.xy;
+  }
+  grad += gradS;
+
   // ---- setup and swash at the water's edge --------------------------------
   float nearEdge = 1.0 - smoothstep(0.0, 0.7, still);
   float sw = (1.0 - q) * (1.0 - q);
@@ -156,17 +186,26 @@ Surf surface(vec2 p, bool detail) {
   s.grad = grad * uExag;
   s.still = still;
   s.film = uTide + s.eta - bed;
-  s.face = steep * smoothstep(0.55, 1.0, q) * (1.0 - broken);
+  s.face = steep * smoothstep(0.55, 1.0, q) * (1.0 - broken) * (1.0 + 0.6 * plunge);
+  s.steepSea = length(gradS);
+  // Gerstner-style horizontal motion: crests bunch up and, when plunging, the lip
+  // is thrown ahead of the face (the profile idea behind Surf's Up's wave rigs)
+  vec2 dirA = a.yz / max(length(a.yz), 1e-5);
+  float crest01 = clamp(shape * 0.62, 0.0, 1.0);
+  s.lean = (dirA * 0.5 * H * crest01 * (0.22 * steep + 1.1 * plunge * steep * steep) * (1.0 - 0.6 * broken)
+            - gradS * 1.6) * uExag;
+  s.plunge = plunge * steep;
   s.slope = 0.5 * H * dshape * length(a.yz) / T * uExag;
   s.foam = 0.0;
 
   if (detail) {
     float dissip = smoothstep(0.5, 0.88, a2.y / h);
     float big = smoothstep(0.04, 0.3, H);
-    float roller = br1 * dissip * smoothstep(0.78, 0.94, q);
-    float lip = br1 * (1.0 - br0) * smoothstep(0.9, 1.0, q);           // first white at the crest
+    float roller = br1 * dissip * smoothstep(0.78, 0.94, q) * mix(1.0, 0.75, plunge);
+    float lip = br1 * (1.0 - br0) * smoothstep(0.9, 1.0, q) * (1.0 + 1.6 * plunge); // first white at the crest: a violent burst when plunging
     float trail = br0 * 0.82 * exp(-q * T / 4.2) * mix(0.4, 1.0, dissip);
     float foam = max(max(roller, lip), trail) * big * inside;
+    foam += 0.8 * smoothstep(0.22, 0.42, s.steepSea) * inside; // whitecaps where wind-sea waves steepen
     foam += 0.25 * uMess * smoothstep(0.75, 1.0, shapeB * 0.5 + 0.5) * steepB; // whitecaps on wind chop
     // lacy foam: ridged noise leaves a net of white lines as the foam thins out
     vec2 fuv = p * 0.05 + vec2(uTime * 0.012, 0.0);

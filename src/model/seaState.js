@@ -1,8 +1,10 @@
 // Turns one forecast hour into what you would actually see at the beach:
 // the solved wave fields for the renderer plus a human summary.
 
+import { buildSpectrum } from '../physics/spectrum.js';
 import {
   makeSolverGrid,
+  windBreakingEffect,
   transformToBoundary,
   solveTrain,
   measureSurf,
@@ -50,6 +52,34 @@ export function windRelation(wind, seawardBearing) {
   else if (onshore <= 0.7) label = 'Cross-onshore';
   else label = 'Onshore';
   return { onshore, label, rel };
+}
+
+/** Wind's grip on breaking waves for this hour (see windBreakingEffect). */
+export function windEffect(wind, relation, trains) {
+  if (!wind || !relation) return { s: 0, gamma: windBreakingEffect(0).gamma, label: null };
+  const crossMs = (wind.speed / 3.6) * relation.onshore;
+  const hb = Math.max(0.8, (trains[0]?.height ?? 1) / 0.7);
+  const fx = windBreakingEffect(crossMs, hb);
+  const label =
+    wind.speed < 8 || Math.abs(fx.s) < 0.25 ? null
+      : fx.s > 0 ? 'onshore wind breaks the waves early and soft'
+      : 'offshore wind holds the faces up: later, steeper breaks';
+  return { ...fx, label };
+}
+
+/**
+ * Wind sea and swell from clearly different directions ("crossing seas") make a
+ * lumpier, less organised surface: the two systems interact nonlinearly, most
+ * strongly when they meet at roughly 40-60 degrees (see README, "The science").
+ * @returns 0..1
+ */
+export function crossingSeas(hour) {
+  const swell = hour.trains.find((t) => t.kind === 'swell');
+  const sea = hour.trains.find((t) => t.kind === 'wind');
+  if (!swell || !sea || sea.height < 0.4) return 0;
+  const angle = Math.abs(wrap180(swell.direction - sea.direction));
+  const t = Math.min(1, Math.max(0, (angle - 20) / 40));
+  return t * t * (3 - 2 * t) * Math.min(1, sea.height / 1.2);
 }
 
 /** 0 = groomed lines, 1 = blown-out mess. Drives the look of the water. */
@@ -107,8 +137,9 @@ export function quickSeaState(ctx, hour) {
   const trains = boundaryTrains(ctx, hour);
   if (!trains.length) return { surfHeight: 0, rating: { score: 0, label: 'Flat' } };
   const combined = Math.hypot(...trains.map((t) => t.height));
-  const surfHeight = quickBreakHeight(ctx.profile, hour.tide, { ...trains[0], height: combined });
   const relation = windRelation(hour.wind, ctx.seawardBearing);
+  const fx = windEffect(hour.wind, relation, trains);
+  const surfHeight = quickBreakHeight(ctx.profile, hour.tide, { ...trains[0], height: combined }, fx.gamma);
   return { surfHeight, rating: rate(surfHeight, trains[0].period, hour.wind, relation) };
 }
 
@@ -116,18 +147,26 @@ export function quickSeaState(ctx, hour) {
 export function computeSeaState(ctx, hour) {
   const trains = boundaryTrains(ctx, hour).slice(0, 2);
   const relation = windRelation(hour.wind, ctx.seawardBearing);
-  const solved = trains.map((b) => ({ ...b, field: solveTrain(ctx.grid, hour.tide, b) }));
+  const fx = windEffect(hour.wind, relation, trains);
+  const solved = trains.map((b) => ({ ...b, field: solveTrain(ctx.grid, hour.tide, b, fx.gamma) }));
+  const crossing = crossingSeas(hour);
   let surf = null, sets = null, wash = { setup: 0, swash: 0, r2: 0 };
   if (solved.length) {
     const primary = solved[0];
     const combined = Math.hypot(...solved.map((t) => t.height));
-    surf = measureSurf(ctx.grid, primary.field, combined);
-    sets = measureSurf(ctx.grid, primary.field, combined * 1.3);
+    surf = measureSurf(ctx.grid, primary.field, combined, { windS: fx.s });
+    sets = measureSurf(ctx.grid, primary.field, combined * 1.3, { windS: fx.s });
     wash = runup(combined, primary.period);
   }
   const surfHeight = surf?.height ?? 0;
+  // the wind-sea train, if any, becomes a JONSWAP/TMA directional spectrum
+  const sea = solved.find((t) => t.kind === 'wind');
+  const spectrum = sea
+    ? buildSpectrum({ Hs: sea.height, Tp: sea.period, angle: sea.angle, depth: sea.field.boundaryDepth })
+    : { comps: [], hs: 0 };
   return {
     hour,
+    spectrum,
     trains: solved,
     surf,
     setHeight: sets?.height ?? surfHeight,
@@ -137,7 +176,9 @@ export function computeSeaState(ctx, hour) {
     runup: wash,
     wind: hour.wind,
     windRelation: relation,
-    mess: messiness(hour.wind, relation),
+    mess: Math.min(1, messiness(hour.wind, relation) + 0.25 * crossing),
+    windEffect: fx,
+    crossing,
     rating: rate(surfHeight, solved[0]?.period ?? 0, hour.wind, relation),
     tide: hour.tide,
   };

@@ -96,6 +96,73 @@ middle of the beach, with the breaker type from the Iribarren number.
 **Rating.** `src/model/seaState.js → rate()` is a small, readable heuristic (size, period, wind
 relative to the beach). Tune it to your taste.
 
+## The science behind the waves
+
+What the model does, and the literature each piece rests on.
+
+**How waves are built.** Wind blows over the sea and grows waves; once they outrun the wind they
+become swell, which travels thousands of kilometres with little loss. Near a coast the seabed takes
+over: waves slow down (refraction bends the crests towards the beach), bunch up (shoaling makes them
+taller) and break when height reaches roughly 0.78 of the depth (the breaking index; McCowan 1894,
+Battjes & Janssen 1978). All of that is solved over the real seabed in `src/physics/nearshore.js`.
+
+**Swell and wind sea together ("synergy").** A real sea is usually two or more systems at once.
+- Independent systems add in *energy*, not height: a 2 m swell plus a 1 m wind sea is 2.2 m, not
+  3 m (`Math.hypot` in `src/model/seaState.js`).
+- Swell and wind sea interact nonlinearly, strongest when they meet at roughly 40-60 degrees; the
+  result is a lumpier, less organised surface ("crossing seas") and occasionally larger crests
+  (Hasselmann et al. 1973; Resio & Perrie 2009; Frontiers in Marine Science 2022). The app measures
+  the angle between the swell and the wind sea and roughens the water accordingly.
+- Real swell arrives in groups, which is why sets of bigger waves come through, and the wave groups
+  drive the lulls between them. The shader generates sets for that reason.
+
+**How wind changes wave shape.** The evidence agrees on direction and disagrees on size:
+- *Onshore* wind makes waves break earlier, in deeper water, as soft spilling breakers, with a
+  lower height-to-depth ratio. *Offshore* wind holds the face up, so waves break later, steeper and
+  plunge with a bigger overturn (Douglass 1990; Feddersen & Veron 2005; Feddersen et al. 2023, 2024).
+- Break-point shifts of up to 40 % and surf-zone width changes of up to 100 % were measured in the
+  lab, but only for strong winds; Peregrine (1983) judged the effect slight for moderate winds.
+- So the app applies a deliberately modest version: the breaking index moves by up to +-16 %,
+  scaled by wind speed relative to wave speed (U/C), and the breaker type is nudged towards
+  plunging or spilling. See `windBreakingEffect()`.
+- Separately, strong onshore wind adds short, steep wind chop that breaks the surface into mush;
+  light offshore wind grooms it. That drives the water's texture and the rating.
+
+**What is not modelled:** wave-wave interaction between the two trains in the surf zone, surf beat
+(long waves bound to wave groups), and wind-driven growth of waves inside the patch.
+
+Primary sources: Douglass (1990), *Journal of Waterway, Port, Coastal and Ocean Engineering* and
+Douglass & Weggel (1988), ICCE; Feddersen & Veron (2005), *J. Physical Oceanography*; Feddersen,
+Pizzo et al. (2023, 2024), *Journal of Fluid Mechanics*, Surf Ranch field-scale studies; Resio &
+Perrie (2009), *J. Physical Oceanography*; Peregrine (1983), *Annual Review of Fluid Mechanics*.
+I could read abstracts and citing papers for these, but not every original in full text, so
+treat the numbers above as the literature's direction rather than a calibrated fit.
+
+### Rendering techniques, and where they come from
+
+The renderer follows the layered approach of the graphics literature: a wind-driven spectrum for
+the open sea, an energy-carrying, seabed-aware layer near shore, a breaker layer chosen by the
+Iribarren number, then foam, spray and shading.
+
+| Technique | Source | In the app |
+| --- | --- | --- |
+| Finite-depth dispersion, omega^2 = gk tanh(kD) | Tessendorf (2004) | Yes: every wave speed |
+| JONSWAP spectrum, TMA depth correction | Hasselmann et al. (1973); Bouws et al. (1985); Lee et al. (2007) | Yes: the wind sea, 20 plane waves (`src/physics/spectrum.js`) |
+| cos^2s directional spreading | Mitsuyasu / Goda | Yes: in the spectrum and in the offshore transform |
+| Swell and wind sea as separate partitions | Houdini TMA, Open-Meteo partitions | Yes |
+| Phase function that refracts over the seabed | Peachey (1986); Fournier & Reeves (1986) | Yes: the travel-time field |
+| Energy transported over bathymetry, shoaling, H = gamma d cap | Jeschke & Wojtan wave packets (2017); SWAN / Battjes-Janssen | Yes, on a grid rather than with packets |
+| Breaker type from the Iribarren number | Battjes (1974) | Yes: evaluated per pixel from the real slope, shifted by wind |
+| Wave profiles shaped by position over the sea floor | Surf's Up beach break (2007) | Yes: peaked, pitched profiles; plunging lips thrown forward |
+| Choppy horizontal displacement | Tessendorf; Gerstner | Yes: wind sea and crests |
+| Foam from breaking dissipation, whitecaps from steepness | Sea of Thieves; Crest | Yes (steepness instead of the FFT Jacobian) |
+| Spray particles at the lip, blown by wind | Peachey (1986); Thurey et al. (2007) | Yes (`src/scene/spray.js`) |
+| Fresnel, depth-based colour, light through thin lips | Tessendorf; Sea of Thieves; Atlas | Yes, simplified |
+| Full FFT ocean with thousands of components | Tessendorf; Crest; WaveWorks | No: 20 components; a WebGPU FFT would be the upgrade |
+| Wave packets / wavelets, reflection off groynes | Jeschke et al. (2017-2020) | No |
+| True overturning barrels | Thurey (2007) particle sheets; FLIP/APIC in film | No: a height field cannot overhang; lips lean but do not curl |
+| Bubbles, underwater view, Snell's window | Weta Loki; Atlas | No |
+
 ## Data sources
 
 | What | Source | Notes |

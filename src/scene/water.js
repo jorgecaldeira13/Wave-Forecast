@@ -7,10 +7,13 @@ ${WAVES}
 #include <common>
 #include <logdepthbuf_pars_vertex>
 varying vec3 vWorld;
+varying vec2 vBase;
 void main() {
   vec3 p = position;
   Surf s = surface(p.xz, false);
+  vBase = p.xz;
   p.y = uTide + s.eta;
+  p.xz += s.lean;
   vWorld = p;
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
   #include <logdepthbuf_vertex>
@@ -24,10 +27,11 @@ ${WAVES}
 #include <logdepthbuf_pars_fragment>
 uniform vec3 uWind;   // unit direction the wind blows towards (x, z) and speed in m/s
 varying vec3 vWorld;
+varying vec2 vBase;
 
 void main() {
   #include <logdepthbuf_fragment>
-  Surf s = surface(vWorld.xz, true);
+  Surf s = surface(vBase, true);
   vec3 toCam = cameraPosition - vWorld;
   float dist = length(toCam);
   vec3 V = toCam / dist;
@@ -52,6 +56,8 @@ void main() {
   body *= light;
   float back = pow(clamp(dot(V, -uSunDir) * 0.5 + 0.5, 0.0, 1.0), 2.0);
   body += vec3(0.008, 0.13, 0.10) * s.face * (0.4 + 1.2 * back) * uSunStrength;
+  // sunlight through the thin pitching lip of a plunging wave
+  body += vec3(0.02, 0.20, 0.15) * s.plunge * smoothstep(0.1, 0.3, s.slope) * (0.3 + back) * uSunStrength;
 
   float fres = 0.02 + 0.98 * pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 5.0);
   vec3 R = reflect(-V, N);
@@ -226,6 +232,10 @@ export class Water {
       uPeriod: { value: new THREE.Vector2(10, 5) },
       uSwash: { value: new THREE.Vector2(0, 0) },
       uMess: { value: 0 },
+      uWindS: { value: 0 },
+      uComp: { value: Array.from({ length: 20 }, () => new THREE.Vector4()) },
+      uCompPh: { value: new Float32Array(20) },
+      uCompN: { value: 0 },
       uWind: { value: new THREE.Vector3(1, 0, 0) },
     };
     this.material = new THREE.ShaderMaterial({
@@ -264,7 +274,15 @@ export class Water {
     }
     this.fieldA.needsUpdate = this.fieldA2.needsUpdate = this.fieldB.needsUpdate = true;
     const u = this.uniforms;
-    u.uEdgeH.value.set(a?.height ?? 0, b?.height ?? 0);
+    // a wind sea is drawn by the spectrum layer instead of the single-period train
+    const spec = state.spectrum?.comps ?? [];
+    u.uCompN.value = Math.min(20, spec.length);
+    spec.slice(0, 20).forEach((c, i) => {
+      u.uComp.value[i].set(c.kx, c.kz, c.omega, c.amp);
+      u.uCompPh.value[i] = c.phase;
+    });
+    u.uWindS.value = state.windEffect?.s ?? 0;
+    u.uEdgeH.value.set(a?.height ?? 0, spec.length ? 0 : b?.height ?? 0);
     u.uPeriod.value.set(a?.period ?? 10, b?.period ?? 5);
     u.uTide.value = state.tide;
     u.uSwash.value.set(state.runup.setup, state.runup.swash);

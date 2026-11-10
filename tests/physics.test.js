@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { wavenumber, celerity, groupVelocity, deepWavelength } from '../src/physics/dispersion.js';
 import {
-  makeSolverGrid, transformToBoundary, solveTrain, measureSurf, quickBreakHeight, centreProfile, runup,
+  makeSolverGrid, windBreakingEffect, transformToBoundary, solveTrain, measureSurf, quickBreakHeight, centreProfile, runup,
 } from '../src/physics/nearshore.js';
 import { loadTerrainNode } from '../src/data/terrain-node.mjs';
-import { rate, windRelation, describeSize } from '../src/model/seaState.js';
+import { rate, windRelation, describeSize, crossingSeas } from '../src/model/seaState.js';
 import { normalise, summariseEnsemble, applyWindSource } from '../src/data/forecast.js';
 import { sunPosition } from '../src/data/sun.js';
 import { localToLatLon, latLonToLocal, BEACHES } from '../src/config/beaches.js';
@@ -134,4 +134,53 @@ test('wind source: regional first, Google AI further out, each covers for the ot
   assert.equal(hours[0].wind.source, 'google');
   applyWindSource(hours, 'local', ref);
   assert.equal(hours[2].wind.source, 'local');
+});
+
+test('wind and breaking: offshore holds waves up, onshore breaks them early (Douglass 1990 direction)', async () => {
+  const off = windBreakingEffect(-8), calm = windBreakingEffect(0), on = windBreakingEffect(8);
+  assert.ok(off.gamma > calm.gamma && calm.gamma > on.gamma);
+  assert.ok(on.s > 0 && off.s < 0);
+  close(calm.gamma, 0.78, 1e-9);
+  assert.ok(off.gamma < 0.78 * 1.2 && on.gamma > 0.78 * 0.8, 'the effect stays modest');
+  const terrain = await loadTerrainNode('praia-nova');
+  const grid = makeSolverGrid(terrain, 256);
+  const b = transformToBoundary({ height: 1.6, period: 12, direction: 270, spread: 20 }, terrain.meta.refDepth, centreProfile(grid).boundaryDepth + 0.3, terrain.meta.seawardBearing);
+  const at = (fx) => measureSurf(grid, solveTrain(grid, 0.3, b, fx.gamma), b.height, { windS: fx.s });
+  const sOff = at(off), sOn = at(on);
+  assert.ok(sOn.breakX < sOff.breakX, `onshore wind breaks further out (${sOn.breakX} vs ${sOff.breakX})`);
+  assert.ok(sOff.height / sOff.depth > sOn.height / sOn.depth, 'higher height-to-depth ratio with offshore wind');
+  assert.ok(sOff.iribarren > sOn.iribarren, 'offshore wind pushes the breaker type towards plunging');
+});
+
+test('crossing seas need a real wind sea at a real angle', () => {
+  const mk = (swellDir, seaDir, seaH) => ({ trains: [
+    { kind: 'swell', height: 2, period: 12, direction: swellDir },
+    { kind: 'wind', height: seaH, period: 6, direction: seaDir } ] });
+  assert.ok(crossingSeas(mk(270, 275, 1.5)) < 0.05, 'aligned systems do not cross');
+  assert.ok(crossingSeas(mk(270, 330, 1.5)) > 0.9, 'sixty degrees apart with a decent wind sea');
+  assert.equal(crossingSeas(mk(270, 330, 0.2)), 0, 'a tiny wind sea does not count');
+});
+
+test('wind-sea spectrum: JONSWAP/TMA with directional spreading', async () => {
+  const { buildSpectrum, hsOf, jonswap, kitaigorodskii, spreadingExponent } = await import('../src/physics/spectrum.js');
+  const fp = 1 / 7;
+  // peak enhancement: gamma 3.3 puts more energy at the peak than Pierson-Moskowitz
+  assert.ok(jonswap(fp, fp, 3.3) / jonswap(fp, fp, 1) > 2.5);
+  // the spectrum peaks at fp
+  const fs = Array.from({ length: 60 }, (_, i) => 0.05 + i * 0.005);
+  const peak = fs.reduce((b, f) => (jonswap(f, fp) > jonswap(b, fp) ? f : b));
+  close(peak, fp, 0.01, 'peak frequency');
+  // shallow water removes energy; deep water keeps it all
+  assert.equal(kitaigorodskii(0.2, 200), 1);
+  assert.ok(kitaigorodskii(0.1, 3) < 0.3);
+  // narrower spreading above the peak than below
+  assert.ok(spreadingExponent(2 * fp, fp, 10) > 0 && spreadingExponent(0.5 * fp, fp, 10) < 1);
+  const sp = buildSpectrum({ Hs: 1.4, Tp: 7, angle: 0.3, depth: 25 });
+  close(hsOf(sp.comps), 1.4, 0.2, 'recovers the requested significant height');
+  assert.ok(sp.comps.length >= 12 && sp.comps.length <= 20);
+  // components spread around the mean direction, none heading away from the beach
+  const dirs = sp.comps.map((c) => Math.atan2(c.kz, c.kx));
+  assert.ok(Math.max(...dirs) > 0.3 && Math.min(...dirs) < 0.3);
+  assert.ok(dirs.every((d) => Math.abs(d - 0.3) < 1.3));
+  assert.equal(buildSpectrum({ Hs: 0, Tp: 7 }).comps.length, 0);
 });

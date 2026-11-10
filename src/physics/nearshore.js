@@ -12,6 +12,27 @@
 import { G, celerity, groupVelocity, deepWavelength, makeSpeedTable } from './dispersion.js';
 
 export const GAMMA_BREAK = 0.78; // H/h at which a wave starts breaking
+
+/**
+ * How wind over the surf zone changes where and how waves break.
+ *
+ * Lab and field evidence (Douglass 1990; Feddersen & Veron 2005; Feddersen et al.
+ * 2023, JFM) agrees on the direction: onshore wind makes waves break earlier, in
+ * deeper water, as spilling breakers (lower height-to-depth ratio); offshore wind
+ * holds the face up so waves break later and steeper, plunging with a bigger
+ * overturn. The effect scales with wind speed relative to wave speed, U/C.
+ * The size is kept deliberately modest (Peregrine 1983 judged moderate wind
+ * effects slight): +-16 % on the breaking index at the extremes.
+ *
+ * @param crossMs cross-shore wind component in m/s, + blowing onshore
+ * @param breakDepth rough depth where waves break, m
+ * @returns {{ s: number, gamma: number }} s in -1 (offshore) .. +1 (onshore)
+ */
+export function windBreakingEffect(crossMs, breakDepth = 2) {
+  const C = Math.sqrt(G * Math.max(breakDepth, 0.5));
+  const s = Math.tanh(crossMs / (1.2 * C));
+  return { s, gamma: GAMMA_BREAK * (1 - 0.16 * s) };
+}
 export const GAMMA_BORE = 0.5; // H/h of the broken bore in the surf zone
 const MIN_DEPTH = 0.15; // dry land is treated as a very slow medium
 const DEG = Math.PI / 180;
@@ -119,7 +140,7 @@ function blur3(src, nx, nz, passes = 1) {
  *   Hcrit edge wave height above which a wave has already broken here (m)
  *   hcap  depth that limits the broken bore here (m)
  */
-export function solveTrain(grid, tide, boundary) {
+export function solveTrain(grid, tide, boundary, gamma = GAMMA_BREAK) {
   const { nx, nz, dx, dz, bed } = grid;
   const N = nx * nz;
   const T = boundary.period;
@@ -221,7 +242,7 @@ export function solveTrain(grid, tide, boundary) {
     const k = j * nx;
     F[j] = cg[k];
     K[k] = 1;
-    Hc[j] = (GAMMA_BREAK * Math.max(depth[k], 0)) / 1;
+    Hc[j] = gamma * Math.max(depth[k], 0);
     hc[j] = Math.max(depth[k], 0);
     Hcrit[k] = Hc[j];
     hcap[k] = hc[j];
@@ -248,7 +269,7 @@ export function solveTrain(grid, tide, boundary) {
       const hPos = Math.max(h, 0);
       const flux = Math.max(Fn[j], 1e-4);
       const kHere = Math.min(4, Math.sqrt(flux / cg[k]));
-      const crit = (GAMMA_BREAK * hPos) / Math.max(kHere, 0.05);
+      const crit = (gamma * hPos) / Math.max(kHere, 0.05);
       Hcn[j] = Math.min(crit, lerpRow(Hc, jf));
       hcn[j] = Math.min(hPos, lerpRow(hc, jf) + BORE_RECOVERY * step);
     }
@@ -266,14 +287,14 @@ export function solveTrain(grid, tide, boundary) {
     [hc, hcn] = [hcn, hc];
   }
 
-  return { tau, sx, sz, K, Hcrit, hcap, depth, boundaryDepth: hB, boundary };
+  return { tau, sx, sz, K, Hcrit, hcap, depth, boundaryDepth: hB, boundary, gamma };
 }
 
 /**
  * Read the surf off a solved field: where and how big do waves of a given
  * offshore-edge height break in front of the middle of the beach?
  */
-export function measureSurf(grid, field, edgeHeight, { zMin = -110, zMax = 110 } = {}) {
+export function measureSurf(grid, field, edgeHeight, { zMin = -110, zMax = 110, windS = 0 } = {}) {
   const { nx, nz, dx, dz, x0, z0, bed } = grid;
   const T = field.boundary.period;
   const hits = [];
@@ -287,7 +308,7 @@ export function measureSurf(grid, field, edgeHeight, { zMin = -110, zMax = 110 }
         const slope = Math.max(0.004, (bed[j * nx + i1] - bed[j * nx + i0]) / ((i1 - i0) * dx));
         hits.push({
           x: x0 + i * dx,
-          height: Math.min(field.K[k - 1] * edgeHeight, GAMMA_BREAK * Math.max(field.depth[k - 1], 0.05) * 1.15),
+          height: Math.min(field.K[k - 1] * edgeHeight, field.gamma * Math.max(field.depth[k - 1], 0.05) * 1.15),
           depth: field.depth[k],
           slope,
         });
@@ -302,7 +323,8 @@ export function measureSurf(grid, field, edgeHeight, { zMin = -110, zMax = 110 }
   };
   const height = med('height');
   const slope = med('slope');
-  const iribarren = slope / Math.sqrt(Math.max(height, 0.05) / deepWavelength(T));
+  // wind nudges the breaker type: offshore wind (windS < 0) steepens the face towards plunging
+  const iribarren = (slope / Math.sqrt(Math.max(height, 0.05) / deepWavelength(T))) * (1 - 0.5 * windS);
   return {
     height,
     depth: med('depth'),
@@ -326,7 +348,7 @@ export function runup(edgeHeight, period, foreshoreSlope = 0.075) {
  * Cheap 1-D estimate of the breaking height on a single cross-shore profile.
  * Used to fill the whole week of the timeline without 168 full 2-D solves.
  */
-export function quickBreakHeight(profile, tide, boundary) {
+export function quickBreakHeight(profile, tide, boundary, gamma = GAMMA_BREAK) {
   const { depths, boundaryDepth } = profile; // depths below MSL, offshore -> shore
   const T = boundary.period;
   if (boundary.height < 0.02) return 0;
@@ -341,7 +363,7 @@ export function quickBreakHeight(profile, tide, boundary) {
     const c = celerity(T, h), cg = groupVelocity(T, h);
     const sinA = Math.min(0.99, Math.abs((sinB * c) / cB));
     const Hloc = boundary.height * Math.sqrt((cgB / cg) * (cosB / Math.sqrt(1 - sinA * sinA)));
-    if (Hloc > GAMMA_BREAK * h) return Math.min(Hloc, GAMMA_BREAK * h * 1.15);
+    if (Hloc > gamma * h) return Math.min(Hloc, gamma * h * 1.15);
     last = Hloc;
   }
   return last;

@@ -7,6 +7,7 @@ import { makeSatelliteTexture } from './satellite.js';
 import { bedAt } from '../data/terrain.js';
 import { sunPosition, bearingToLocal, skyPalette } from '../data/sun.js';
 import { makeSurfaceSampler } from '../model/surface.js';
+import { Spray } from './spray.js';
 
 const SKY_VERT = /* glsl */ `
 #include <common>
@@ -98,6 +99,10 @@ export class Viewer {
     const sat = makeSatelliteTexture(beach, rect);
     this.ground.setSatellite(sat);
     this.satelliteLoaded = sat.loaded;
+
+    this.spray = new Spray(quality < 1 ? 250 : 450);
+    this.scene.add(this.spray.points);
+    this.windLocal = [0, 0];
 
     // people for scale: a surfer waiting in the line-up and someone on the sand
     this.surfer = makeSurfer();
@@ -376,6 +381,14 @@ export class Viewer {
     s.uAmbient.value = pal.ambient;
     this.sun = sun;
 
+    // wind in the beach frame (m/s, direction it blows towards) for the spray
+    if (state.wind) {
+      const rad = Math.PI / 180, to = (state.wind.direction + 180) * rad;
+      const bx = (this.beach.seawardBearing + 180) * rad, bz = (this.beach.seawardBearing - 90) * rad;
+      const v = state.wind.speed / 3.6;
+      this.windLocal = [Math.cos(to - bx) * v, Math.cos(to - bz) * v];
+    } else this.windLocal = [0, 0];
+
     // float the surfer just outside the break; stand the walker above the swash
     this.sampler = this.solverGrid ? makeSurfaceSampler(this.solverGrid, state) : null;
     this.surferSpot = [Math.max(Math.min(-50, state.setBreakX ?? -120) - 10, this.terrain.x0 + 150), 34];
@@ -432,6 +445,11 @@ export class Viewer {
         this.controls.target.set(pose.target[0], tide + 0.9 + bob * 0.6, pose.target[2]);
       }
     }
+    this.spray.update({
+      dt, state: this.state, sampler: this.sampler, time: this.time, exag, wind: this.windLocal,
+      light: this.shared.uSunStrength.value + this.shared.uAmbient.value,
+      pxScale: this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)),
+    });
     if (this.walk.active) {
       this.updateWalk(dt, tide, exag);
     } else {
