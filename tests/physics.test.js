@@ -6,7 +6,7 @@ import {
 } from '../src/physics/nearshore.js';
 import { loadTerrainNode } from '../src/data/terrain-node.mjs';
 import { rate, windRelation, describeSize } from '../src/model/seaState.js';
-import { normalise } from '../src/data/forecast.js';
+import { normalise, summariseEnsemble, applyWindSource } from '../src/data/forecast.js';
 import { sunPosition } from '../src/data/sun.js';
 import { localToLatLon, latLonToLocal, BEACHES } from '../src/config/beaches.js';
 import { readFile } from 'node:fs/promises';
@@ -102,4 +102,36 @@ test('geometry helpers', () => {
   const sun = sunPosition(new Date('2026-06-21T12:40:00Z'), beach.lat, beach.lon);
   close(sun.elevation * 180 / Math.PI, 74.8, 1.5, 'solstice noon elevation');
   close(sun.azimuth * 180 / Math.PI, 180, 12, 'due south');
+});
+
+test('Google WeatherNext ensemble is averaged as a vector and keeps its spread', () => {
+  const raw = { hourly: {
+    time: ['2026-11-10T00:00'],
+    wind_speed_10m: [10], wind_direction_10m: [350],
+    wind_speed_10m_member01: [20], wind_direction_10m_member01: [10],
+  } };
+  const s = summariseEnsemble(raw);
+  assert.equal(s.members, 2);
+  close(s.speed[0], 15, 0.01);
+  assert.ok(s.direction[0] < 12 || s.direction[0] > 348, `mean direction near north, got ${s.direction[0]}`);
+  close(s.spread[0], 5, 0.01);
+});
+
+test('wind source: regional first, Google AI further out, each covers for the other', () => {
+  const ref = new Date('2026-11-10T00:00Z');
+  const hour = (lead, local, ai) => ({ time: new Date(ref.getTime() + lead * 3600000), windLocal: local, windAI: ai });
+  const local = { speed: 10, direction: 90, gust: 20 }, ai = { speed: 30, direction: 90, gust: null, spread: 4 };
+  const hours = [hour(6, local, ai), hour(72, local, ai), hour(140, local, ai), hour(6, null, ai), hour(140, local, null), hour(6, null, null)];
+  applyWindSource(hours, 'auto', ref);
+  assert.equal(hours[0].wind.source, 'local'); close(hours[0].wind.speed, 10, 0.01);
+  assert.equal(hours[1].wind.source, 'blend'); close(hours[1].wind.speed, 20, 0.5);
+  assert.equal(hours[2].wind.source, 'google'); close(hours[2].wind.speed, 30, 0.01);
+  assert.equal(hours[2].wind.gust, 20, 'gusts still come from the regional model');
+  assert.equal(hours[3].wind.source, 'google');
+  assert.equal(hours[4].wind.source, 'local');
+  assert.equal(hours[5].wind, null);
+  applyWindSource(hours, 'google', ref);
+  assert.equal(hours[0].wind.source, 'google');
+  applyWindSource(hours, 'local', ref);
+  assert.equal(hours[2].wind.source, 'local');
 });

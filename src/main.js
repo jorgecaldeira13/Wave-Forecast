@@ -1,6 +1,6 @@
 import { BEACHES, DEFAULT_BEACH, SATELLITE_ATTRIBUTION } from './config/beaches.js';
 import { loadTerrain } from './data/terrain.js';
-import { loadForecast, nearestHourIndex } from './data/forecast.js';
+import { loadForecast, nearestHourIndex, applyWindSource, WIND_SOURCES } from './data/forecast.js';
 import { sunPosition } from './data/sun.js';
 import { buildContext, computeSeaState, quickSeaState } from './model/seaState.js';
 import { Viewer, CAMERA_PRESETS } from './scene/viewer.js';
@@ -38,6 +38,8 @@ async function start() {
     loadForecast(beach, { forceSample: params.has('sample') }),
   ]);
   const { hours } = forecast;
+  let windMode = WIND_SOURCES.some((w) => w.id === params.get('windsrc')) ? params.get('windsrc') : 'auto';
+  applyWindSource(hours, windMode, forecast.capturedAt);
   const overridden = applyOverrides(hours);
 
   setLoading('Bending the swell around the sandbars…');
@@ -56,8 +58,8 @@ async function start() {
     onSelect: (i) => select(i),
   });
 
-  function select(i) {
-    if (i === index) return;
+  function select(i, force = false) {
+    if (i === index && !force) return;
     index = i;
     timeline.setIndex(i);
     // solve once per frame at most, however fast the scrubbing
@@ -94,6 +96,37 @@ async function start() {
   $('btn-exag').addEventListener('click', () => { exagIndex = (exagIndex + 1) % exags.length; setExag(); });
   setExag();
 
+  // which wind forecast drives the rating and the chop
+  const windButton = $('btn-wind');
+  const showWindMode = () => {
+    windButton.textContent = WIND_SOURCES.find((w) => w.id === windMode).label;
+    windButton.setAttribute('aria-pressed', String(windMode !== 'auto'));
+  };
+  windButton.addEventListener('click', () => {
+    windMode = WIND_SOURCES[(WIND_SOURCES.findIndex((w) => w.id === windMode) + 1) % WIND_SOURCES.length].id;
+    applyWindSource(hours, windMode, forecast.capturedAt);
+    if (params.has('wind')) applyOverrides(hours);
+    hours.forEach((h, i) => { quick[i] = quickSeaState(ctx, h); });
+    showWindMode();
+    select(index, true);
+  });
+  showWindMode();
+
+  // nearest public webcam, to compare the simulation with the real thing
+  if (beach.webcam) {
+    const cam = $('btn-webcam');
+    cam.href = beach.webcam.url;
+    cam.title = beach.webcam.note;
+    cam.hidden = false;
+  }
+
+  // first-person readout: how deep is the water where you stand, how big are the waves
+  viewer.onPov = (info) => {
+    const el = $('pov');
+    el.hidden = !info;
+    if (info) el.textContent = info;
+  };
+
   // play through the week
   let playTimer = null;
   const setPlaying = (on) => {
@@ -118,8 +151,10 @@ async function start() {
     hud.showNotice(`${why} — showing a saved forecast from ${dateFmt.format(forecast.capturedAt)}.`);
   }
   else if (forecast.windMissing) hud.showNotice('Wind forecast is unavailable right now; waves and tide are live.');
+  else if (forecast.aiMissing) hud.showNotice('Google WeatherNext wind is unavailable right now; using the regional model only.');
   $('credits').innerHTML =
     `Forecast <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · ` +
+    `AI wind <a href="https://open-meteo.com/en/docs/google-weathernext-api" target="_blank" rel="noopener">Google WeatherNext 2</a> · ` +
     `Bathymetry <a href="https://emodnet.ec.europa.eu/en/bathymetry" target="_blank" rel="noopener">EMODnet</a> · ${SATELLITE_ATTRIBUTION}`;
 
   // start at the requested hour, or now

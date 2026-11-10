@@ -38,6 +38,7 @@ void main() {
 
 export const CAMERA_PRESETS = [
   { id: 'drone', label: 'Drone' },
+  { id: 'walk', label: 'On foot' },
   { id: 'lineup', label: 'Line-up' },
   { id: 'beach', label: 'Beach' },
   { id: 'groyne', label: 'Groyne' },
@@ -114,6 +115,11 @@ export class Viewer {
     this.controls = controls;
     controls.addEventListener('start', () => { this.flight = null; this.userMoved = true; });
 
+    // first-person mode: you, 1.7 m tall, free to look around and walk into the sea
+    this.walk = { active: false, x: 0, z: 0, yaw: Math.PI / 2, pitch: -0.03, goal: null, eye: 2, keys: new Set(), told: 0, since: 0 };
+    this.onPov = null;
+    this.bindWalkControls(renderer.domElement);
+
     this.flight = null;
     this.setCamera('drone', true);
     this.resize();
@@ -125,8 +131,9 @@ export class Viewer {
     const w = this.container.clientWidth, h = this.container.clientHeight;
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
-    // keep a wide enough horizontal view on tall phone screens
-    this.camera.fov = w / h < 0.8 ? 68 : 50;
+    // keep a wide enough horizontal view on tall phone screens; human eyes see wider than a drone lens
+    if (this.walk?.active) this.camera.fov = w / h < 0.8 ? 80 : 64;
+    else this.camera.fov = w / h < 0.8 ? 68 : 50;
     this.camera.updateProjectionMatrix();
   }
 
@@ -166,6 +173,8 @@ export class Viewer {
   setCamera(id, instant = false) {
     this.preset = id;
     this.userMoved = false;
+    if (id === 'walk') { this.enterWalk(); return; }
+    if (this.walk.active) this.leaveWalk();
     const pose = this.presetPose(id);
     const pos = new THREE.Vector3(...pose.pos), target = new THREE.Vector3(...pose.target);
     if (instant) {
@@ -180,6 +189,163 @@ export class Viewer {
         fromTarget: this.controls.target.clone(), toTarget: target,
       };
     }
+  }
+
+  // ---- on foot -------------------------------------------------------------
+  enterWalk() {
+    const w = this.walk;
+    w.active = true;
+    w.goal = null;
+    w.since = 0;
+    // start on the sand a few steps above the swash, facing the sea
+    w.x = this.walker.position.x + 7;
+    w.z = this.walker.position.z - 12;
+    w.yaw = Math.PI / 2;
+    w.pitch = -0.03;
+    w.eye = bedAt(this.terrain, w.x, w.z) + 1.7;
+    this.controls.enabled = false;
+    this.flight = null;
+    this.resize();
+  }
+
+  leaveWalk() {
+    this.walk.active = false;
+    this.walk.keys.clear();
+    this.controls.enabled = true;
+    // hand the orbit camera a sensible thing to look at
+    const dir = new THREE.Vector3();
+    this.camera.getWorldDirection(dir);
+    this.controls.target.copy(this.camera.position).addScaledVector(dir, 60);
+    this.resize();
+    this.onPov?.(null);
+  }
+
+  bindWalkControls(dom) {
+    const w = this.walk;
+    let down = null;
+    dom.addEventListener('pointerdown', (ev) => {
+      if (!w.active) return;
+      down = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, moved: 0, t: performance.now() };
+      dom.setPointerCapture(ev.pointerId);
+    });
+    dom.addEventListener('pointermove', (ev) => {
+      if (!w.active || !down || ev.pointerId !== down.id) return;
+      const dx = ev.clientX - down.x, dy = ev.clientY - down.y;
+      down.x = ev.clientX; down.y = ev.clientY;
+      down.moved += Math.abs(dx) + Math.abs(dy);
+      // drag the view like a street-level panorama
+      const k = (0.0034 * this.camera.fov) / 64;
+      w.yaw += dx * k;
+      w.pitch = Math.min(1.25, Math.max(-1.25, w.pitch + dy * k));
+    });
+    const up = (ev) => {
+      if (!down || ev.pointerId !== down.id) return;
+      const tap = down.moved < 8 && performance.now() - down.t < 500;
+      down = null;
+      if (w.active && tap) this.walkTo(ev.clientX, ev.clientY);
+    };
+    dom.addEventListener('pointerup', up);
+    dom.addEventListener('pointercancel', () => { down = null; });
+    dom.addEventListener('wheel', (ev) => {
+      if (!w.active) return;
+      ev.preventDefault();
+      this.camera.fov = Math.min(85, Math.max(25, this.camera.fov + ev.deltaY * 0.03));
+      this.camera.updateProjectionMatrix();
+    }, { passive: false });
+    const key = (ev, on) => {
+      if (!w.active || ev.target.closest?.('input, textarea')) return;
+      const k = ev.key.toLowerCase();
+      if (!['w', 'a', 's', 'd'].includes(k)) return;
+      if (on) w.keys.add(k); else w.keys.delete(k);
+    };
+    window.addEventListener('keydown', (ev) => key(ev, true));
+    window.addEventListener('keyup', (ev) => key(ev, false));
+    window.addEventListener('blur', () => w.keys.clear());
+  }
+
+  /** Tap the sand or the sea: walk (or wade, or swim) to that spot. */
+  walkTo(clientX, clientY) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    const o = ray.ray.origin, d = ray.ray.direction;
+    const tide = this.state?.tide ?? 0;
+    const t = this.terrain;
+    let hit = null;
+    for (let s = 1.5; s < 700; s += 0.4 + s * 0.02) {
+      const x = o.x + d.x * s, y = o.y + d.y * s, z = o.z + d.z * s;
+      if (y <= Math.max(bedAt(t, x, z), tide)) { hit = [x, z]; break; }
+    }
+    // tapping the sky means "that way": go 40 m in that direction
+    if (!hit) hit = [o.x + d.x * 40, o.z + d.z * 40];
+    this.walk.goal = {
+      x: Math.min(t.x0 + t.sizeX - 40, Math.max(t.x0 + 60, hit[0])),
+      z: Math.min(t.z0 + t.sizeZ - 40, Math.max(t.z0 + 40, hit[1])),
+    };
+  }
+
+  updateWalk(dt, tide, exag) {
+    const w = this.walk, t = this.terrain;
+    const ground = bedAt(t, w.x, w.z);
+    const depth = Math.max(0, tide - ground);
+    // run on sand, wade when it is knee deep, swim when you cannot stand
+    const speed = depth > 1.3 ? 2.4 : depth > 0.35 ? 3.4 : 6;
+    const fwd = [-Math.sin(w.yaw), -Math.cos(w.yaw)], right = [Math.cos(w.yaw), -Math.sin(w.yaw)];
+    let mx = 0, mz = 0;
+    if (w.keys.has('w')) { mx += fwd[0]; mz += fwd[1]; }
+    if (w.keys.has('s')) { mx -= fwd[0]; mz -= fwd[1]; }
+    if (w.keys.has('d')) { mx += right[0]; mz += right[1]; }
+    if (w.keys.has('a')) { mx -= right[0]; mz -= right[1]; }
+    const len = Math.hypot(mx, mz);
+    if (len > 0) {
+      w.goal = null;
+      w.x += (mx / len) * speed * dt;
+      w.z += (mz / len) * speed * dt;
+    } else if (w.goal) {
+      const gx = w.goal.x - w.x, gz = w.goal.z - w.z;
+      const dist = Math.hypot(gx, gz);
+      if (dist < 0.4) w.goal = null;
+      else {
+        const step = Math.min(dist, speed * dt * Math.min(1, 0.25 + dist / 6)); // ease in to a stop
+        w.x += (gx / dist) * step;
+        w.z += (gz / dist) * step;
+      }
+    }
+    w.x = Math.min(t.x0 + t.sizeX - 40, Math.max(t.x0 + 60, w.x));
+    w.z = Math.min(t.z0 + t.sizeZ - 40, Math.max(t.z0 + 40, w.z));
+
+    // eyes 1.7 m above your feet; once the water is over your chin you float with it
+    const bed = bedAt(t, w.x, w.z);
+    const surface = tide + (this.sampler ? this.sampler(w.x, w.z, this.time, exag) : 0);
+    const eye = Math.max(bed + 1.7, surface + 0.3);
+    w.eye += (eye - w.eye) * Math.min(1, dt * 9);
+    this.camera.position.set(w.x, w.eye, w.z);
+    this.camera.rotation.set(w.pitch, w.yaw, 0, 'YXZ');
+
+    // tell the interface what you are standing in, a few times a second
+    w.since += dt;
+    w.told -= dt;
+    if (this.onPov && w.told <= 0) {
+      w.told = 0.3;
+      this.onPov(w.since < 7 ? 'Drag to look around · tap the sand or the sea to go there · W A S D to walk' : this.describeSpot(bed, tide));
+    }
+  }
+
+  describeSpot(bed, tide) {
+    const w = this.walk;
+    const depth = tide - bed;
+    const H = this.sampler?.waveHeight(w.x, w.z) ?? 0;
+    const against = (h) => (h < 0.3 ? 'ankle high' : h < 0.6 ? 'knee high' : h < 1.0 ? 'waist high' : h < 1.35 ? 'chest high' : h < 1.75 ? 'head high' : `${(h / 1.75).toFixed(1)}× your height`);
+    if (depth < 0.05) {
+      const surf = this.state?.surfHeight ?? 0;
+      const out = Math.max(0, Math.round(w.x - (this.state?.surf?.breakX ?? 0)));
+      return surf > 0.25
+        ? `On the sand · waves break ${out} m in front of you at about ${surf.toFixed(1)} m (${against(surf)})`
+        : 'On the sand · nothing much breaking';
+    }
+    const where = depth < 0.3 ? 'ankle deep' : depth < 0.6 ? 'knee deep' : depth < 1.0 ? 'waist deep' : depth < 1.35 ? 'chest deep' : depth < 1.6 ? 'neck deep' : 'out of your depth, swimming';
+    return `Water ${depth.toFixed(1)} m (${where}) · waves here about ${H.toFixed(1)} m, ${against(H)}`;
   }
 
   setExaggeration(v) {
@@ -266,11 +432,15 @@ export class Viewer {
         this.controls.target.set(pose.target[0], tide + 0.9 + bob * 0.6, pose.target[2]);
       }
     }
-    this.controls.update();
-    // never let the camera sink below the sand or the sea
-    const p = this.camera.position;
-    const floor = Math.max(bedAt(this.terrain, p.x, p.z), this.state?.tide ?? 0) + 0.6;
-    if (p.y < floor) p.y = floor;
+    if (this.walk.active) {
+      this.updateWalk(dt, tide, exag);
+    } else {
+      this.controls.update();
+      // never let the camera sink below the sand or the sea
+      const p = this.camera.position;
+      const floor = Math.max(bedAt(this.terrain, p.x, p.z), tide) + 0.6;
+      if (p.y < floor) p.y = floor;
+    }
     this.renderer.render(this.scene, this.camera);
   }
 }

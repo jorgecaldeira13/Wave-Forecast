@@ -21,6 +21,11 @@ export const BEACHES = {
     timezone: 'Europe/Lisbon',
     // Median sand grain ~0.3 mm -> Dean profile scale fitted to EMODnet depths.
     deanA: 0.085,
+    // Nearest public webcam (not ours; opens on its own site).
+    webcam: {
+      url: 'https://www.skylinewebcams.com/webcam/portugal/lisboa/almada/costa-da-caparica-praia-de-santo-antonio-beach.html',
+      note: 'SkylineWebcams, Praia de Santo António — about 1 km north of Praia Nova',
+    },
   },
 };
 

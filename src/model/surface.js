@@ -36,7 +36,7 @@ export function makeSurfaceSampler(grid, state) {
   const sample = (arr, i, j, u, v) =>
     arr[j * nx + i] * (1 - u) * (1 - v) + arr[j * nx + i + 1] * u * (1 - v) +
     arr[(j + 1) * nx + i] * (1 - u) * v + arr[(j + 1) * nx + i + 1] * u * v;
-  return (x, z, time, exag = 1) => {
+  const sampler = (x, z, time, exag = 1) => {
     const fi = clamp((x - x0) / dx, 0, nx - 1.001);
     const fj = clamp((z - z0) / dz, 0, nz - 1.001);
     const i = fi | 0, j = fj | 0, u = fi - i, v = fj - j;
@@ -68,4 +68,23 @@ export function makeSurfaceSampler(grid, state) {
     }
     return eta * exag;
   };
+
+  /** Typical wave height (crest to trough, m) at a point: what a person standing there meets. */
+  sampler.waveHeight = (x, z) => {
+    const fi = clamp((x - x0) / dx, 0, nx - 1.001);
+    const fj = clamp((z - z0) / dz, 0, nz - 1.001);
+    const i = fi | 0, j = fj | 0, u = fi - i, v = fj - j;
+    const h = state.tide - sample(bed, i, j, u, v);
+    if (h <= 0.03) return 0;
+    let HA = 0, HB = 0;
+    if (a) {
+      const f = a.field;
+      HA = sample(f.K, i, j, u, v) * a.height;
+      if (a.height > sample(f.Hcrit, i, j, u, v)) HA = Math.min(HA, GAMMA_BORE * Math.max(sample(f.hcap, i, j, u, v), 0));
+      HA = Math.min(HA, 0.95 * h);
+    }
+    if (b) HB = Math.min(sample(b.field.K, i, j, u, v) * b.height, 0.42 * h);
+    return Math.hypot(HA, HB);
+  };
+  return sampler;
 }

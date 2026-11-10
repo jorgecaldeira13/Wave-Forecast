@@ -100,6 +100,27 @@ export class Hud {
       $('wind-sub').textContent = 'wind forecast unavailable';
       this.windArrow.style.display = 'none';
     }
+    // where the wind number comes from, and what the other model thinks
+    const note = $('wind-note');
+    note.replaceChildren();
+    const ai = hour.windAI, local = hour.windLocal, src = hour.wind?.source;
+    const say = (w) => `${Math.round(w.speed)} km/h ${compassPoint(w.direction)}`;
+    const sure = ai?.spread != null ? ` ±${Math.round(ai.spread)}` : '';
+    if (src === 'google') {
+      note.append('Google WeatherNext 2', sure ? `${sure} km/h` : '');
+      if (local) note.append(` · regional model ${say(local)}`);
+    } else if (src === 'blend') {
+      note.append(`Blend · Google AI ${say(ai)}${sure} · regional ${say(local)}`);
+    } else if (src === 'local') {
+      note.append('Regional hi-res model');
+      if (ai) note.append(` · Google AI ${say(ai)}${sure}`);
+    }
+    // flag the hours where the two forecasts tell different stories
+    if (ai && local && Math.abs(ai.speed - local.speed) > Math.max(10, 2 * (ai.spread ?? 0))) {
+      const b = document.createElement('b');
+      b.textContent = ' · models disagree';
+      note.append(b);
+    }
 
     const trend = nextHour ? (nextHour.tide > hour.tide + 0.02 ? 'rising' : nextHour.tide < hour.tide - 0.02 ? 'falling' : 'slack') : '';
     $('tide-value').textContent = `${hour.tide >= 0 ? '+' : '−'}${Math.abs(hour.tide).toFixed(1)} m`;

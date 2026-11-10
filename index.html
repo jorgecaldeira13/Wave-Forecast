@@ -40,6 +40,7 @@
         <span class="stat-value" id="wind-value">—</span>
         <span class="stat-sub" id="wind-sub"></span>
       </div>
+      <p class="stat-note" id="wind-note"></p>
       <div class="stat" id="stat-tide">
         <span class="stat-label">Tide</span>
         <span class="stat-value" id="tide-value">—</span>
@@ -64,6 +65,8 @@
       <div class="toolbar">
         <div class="seg" id="cameras" role="group" aria-label="Camera"></div>
         <div class="seg" id="tools" role="group" aria-label="View options">
+          <a id="btn-webcam" class="seg-link" target="_blank" rel="noopener" hidden>Live cam ↗</a>
+          <button type="button" id="btn-wind" title="Which wind forecast to use: Auto uses the high-resolution regional model for the next two days and Google's WeatherNext 2 AI ensemble beyond">Wind: Auto</button>
           <button type="button" id="btn-play" title="Play through the forecast (space)">▶ Play week</button>
           <button type="button" id="btn-exag" title="Exaggerate wave height so it reads from far away">Waves ×1</button>
         </div>
@@ -75,6 +78,7 @@
       <p class="credits" id="credits"></p>
     </footer>
 
+    <div id="pov" class="pov" hidden></div>
     <div id="notice" class="notice" hidden></div>
     <div id="loading" class="loading">
       <div class="loading-card">

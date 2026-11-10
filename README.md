@@ -8,6 +8,7 @@ First beach: **Praia Nova, Costa da Caparica, Portugal**.
 
 ![Praia Nova in 3D](docs/screenshot.jpg)
 ![Line-up, beach at sunset, drone and map views](docs/views.jpg)
+![On foot: standing on the sand at eye level](docs/on-foot.jpg)
 
 ## Run it
 
@@ -27,6 +28,12 @@ No API keys are needed.
   surf rating; the white line is the tide; dark bands are night. `←` `→` step an hour, `space` plays.
 - **Cameras**: Drone, Line-up (you bob on the swell next to a surfer), Beach (a person stands at
   the swash line for scale), Groyne, Map. Drag to orbit, scroll or pinch to zoom.
+- **On foot**: you, 1.7 m tall, standing on the sand. Drag to look around, tap the sand or the sea
+  to go there (or walk with `W A S D`). Wade in and the readout tells you how deep you are and how
+  big the waves are against your body; past your depth you float and rise with each wave.
+- **Wind: Auto / Hi-res / Google AI** picks the wind forecast (see below). The wind panel always
+  shows both, the AI's uncertainty (±km/h), and flags hours where the two disagree.
+- **Live cam ↗** opens the nearest public webcam on its own site, to compare with reality.
 - **Waves ×1 / ×1.5 / ×2** exaggerates wave height so it reads from far away. ×1 is true scale.
 - The scene is lit for the forecast hour: real sun position, cloud cover, sunsets over the sea.
 
@@ -39,7 +46,8 @@ Override the conditions from the address bar to see what a given swell would do 
 &wind=15,60           speed km/h, direction it comes from
 &tide=0.5             metres above mean sea level
 &cloud=10             percent
-&cam=lineup           drone | lineup | beach | groyne | top
+&cam=lineup           drone | walk | lineup | beach | groyne | top
+&windsrc=google       auto | local | google
 &hour=2026-11-14T16:00Z   which forecast hour to open
 &sample               use the saved forecast instead of the live one
 &ui=0                 hide the panels (clean screenshots)
@@ -88,8 +96,28 @@ relative to the beach). Tune it to your taste.
 | --- | --- | --- |
 | Swell, wind waves, tide, water temperature | [Open-Meteo Marine API](https://open-meteo.com/en/docs/marine-weather-api) | free, no key |
 | Wind, air temperature, cloud | [Open-Meteo Weather API](https://open-meteo.com/) | free, no key |
+| AI wind forecast | [Google WeatherNext 2 via Open-Meteo](https://open-meteo.com/en/docs/google-weathernext-api) | 64-member ensemble, 0.25°, free, no key |
 | Seabed depth | [EMODnet Bathymetry](https://emodnet.ec.europa.eu/en/bathymetry) | ~115 m grid |
 | Satellite imagery | Esri World Imagery | loaded live as map tiles, with attribution |
+
+**Google's AI forecast.** WeatherNext 2 is Google DeepMind's AI weather model. It forecasts the
+atmosphere (wind, temperature, pressure), not ocean waves, so here it drives the **wind**: the
+rating, the chop on the water and the onshore/offshore call. It runs 64 possible futures; the app
+uses their average and shows their spread as a confidence figure. It is a global model on a ~28 km
+grid with 6-hourly steps, so it cannot see a local sea breeze. That is why *Auto* uses the
+high-resolution regional model for the first two days and eases over to Google by day four, where
+the AI's skill on the larger weather pattern matters more. Waves still come from physical wave
+models (there is no public Google wave forecast).
+
+**SwellCloud (api.swellcloud.net) — reviewed, not used.** It serves the same underlying wave
+models Open-Meteo already gives us (GFS-Wave and Copernicus/CMEMS), with fewer variables (no swell
+periods per partition, tide only for UK and Ireland), and it needs an API key that a browser-only
+app would have to expose. It would be worth revisiting as a second opinion if this project gains a
+small server.
+
+**Webcams.** No Caparica webcam offers an open API, and their streams are not licensed for
+automated capture, so the app links to the nearest one instead of ingesting it. With permission
+from a camera owner, frames could be used to calibrate breaking height and re-map the sandbars.
 
 **About Google and Starlink.** Starlink is an internet constellation; it has no imagery or terrain
 API. Google's Photorealistic 3D Tiles do exist, but need a billed API key, and they model what is
@@ -120,4 +148,5 @@ uses key-free sources. Google 3D Tiles would be a good optional layer for the to
 - Re-bake sandbars automatically from recent Sentinel-2 imagery.
 - Google Photorealistic 3D Tiles for buildings and dunes (needs your API key).
 - Wind-blown spray, a surfer riding the wave, rip-current arrows.
-- Compare with a webcam or buoy to calibrate the breaking height.
+- Calibrate against a webcam (with the owner's permission) or a buoy.
+- Show model agreement for waves too, by comparing ECMWF, Météo-France and GFS wave models.
