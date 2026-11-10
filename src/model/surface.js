@@ -33,6 +33,13 @@ export function makeSurfaceSampler(grid, state) {
   const { nx, nz, dx, dz, x0, z0, bed } = grid;
   const [a, b] = state.trains;
   const mess = state.mess;
+  const windS = state.windEffect?.s ?? 0;
+  const comps = state.spectrum?.comps ?? [];
+  const bedAt = (x, z) => {
+    const fi = clamp((x - x0) / dx, 0, nx - 1.001), fj = clamp((z - z0) / dz, 0, nz - 1.001);
+    const i = fi | 0, j = fj | 0;
+    return sample(bed, i, j, fi - i, fj - j);
+  };
   const sample = (arr, i, j, u, v) =>
     arr[j * nx + i] * (1 - u) * (1 - v) + arr[j * nx + i + 1] * u * (1 - v) +
     arr[(j + 1) * nx + i] * (1 - u) * v + arr[(j + 1) * nx + i + 1] * u * v;
@@ -49,13 +56,20 @@ export function makeSurfaceSampler(grid, state) {
       const s0 = setFactor(n, z), s1 = setFactor(n + 1, z);
       const blend = smoothstep(0.3, 0.7, q);
       const sf = mix(s0, s1, blend);
+      // local surf-similarity number, as in the shader
+      const slopeBed = Math.abs(bedAt(x + 14, z) - bedAt(x - 14, z)) / 28;
+      const xi = (slopeBed / Math.sqrt(Math.max(a.height * sf, 0.05) / (1.56 * T * T))) * (1 - 0.5 * windS);
+      const plunge = smoothstep(0.38, 0.62, xi) * (1 - smoothstep(2.6, 3.6, xi));
+      const surge = smoothstep(2.6, 3.6, xi);
       const crit = Math.max(sample(f.Hcrit, i, j, u, v), 0.02);
-      const broken = mix(smoothstep(0.93, 1.08, (a.height * s0) / crit), smoothstep(0.93, 1.08, (a.height * s1) / crit), blend);
+      const broken = mix(smoothstep(0.93, 1.08, (a.height * s0) / crit) * (1 - surge), smoothstep(0.93, 1.08, (a.height * s1) / crit) * (1 - surge), blend);
       const Hu = sample(f.K, i, j, u, v) * a.height * sf;
       const Hl = GAMMA_BORE * Math.max(sample(f.hcap, i, j, u, v), 0);
       const H = Math.min(mix(Hu, Math.min(Hu, Hl), broken), 0.95 * h);
       const steep = clamp(H / (0.78 * h), 0, 1);
-      eta += 0.5 * H * waveShape(q, steep * (1 - 0.35 * mess), mix(0.12 + 0.5 * steep, 0.72, broken));
+      const peaked = Math.min(1, steep * (1 - 0.35 * mess) + 0.3 * plunge * steep * (1 - broken));
+      const skew = mix(0.12 + 0.5 * steep + 0.4 * plunge * steep * steep, mix(0.55, 0.9, plunge), broken);
+      eta += 0.5 * H * waveShape(q, peaked, skew);
     }
     if (b) {
       const f = b.field, T = b.period;
@@ -65,6 +79,11 @@ export function makeSurfaceSampler(grid, state) {
       const HB = Math.min(sample(f.K, i, j, u, v) * b.height * sB, 0.42 * h);
       const steepB = clamp(HB / (0.6 * h), 0, 1);
       eta += 0.5 * HB * waveShape(q, steepB, 0.1 + 0.4 * steepB);
+    }
+    for (const c of comps) {
+      const th = Math.tanh(Math.hypot(c.kx, c.kz) * h);
+      const amp = Math.min(c.amp * Math.sqrt(th) * smoothstep(0, 0.6, h), 0.3 * h);
+      eta += amp * Math.cos(c.kx * x + c.kz * z - c.omega * time + c.phase);
     }
     return eta * exag;
   };

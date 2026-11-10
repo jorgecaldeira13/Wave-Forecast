@@ -226,6 +226,10 @@ export class Water {
       uPeriod: { value: new THREE.Vector2(10, 5) },
       uSwash: { value: new THREE.Vector2(0, 0) },
       uMess: { value: 0 },
+      uWindS: { value: 0 },
+      uComp: { value: Array.from({ length: 20 }, () => new THREE.Vector4()) },
+      uCompPh: { value: new Float32Array(20) },
+      uCompN: { value: 0 },
       uWind: { value: new THREE.Vector3(1, 0, 0) },
     };
     this.material = new THREE.ShaderMaterial({
@@ -264,7 +268,15 @@ export class Water {
     }
     this.fieldA.needsUpdate = this.fieldA2.needsUpdate = this.fieldB.needsUpdate = true;
     const u = this.uniforms;
-    u.uEdgeH.value.set(a?.height ?? 0, b?.height ?? 0);
+    // a wind sea is drawn by the spectrum layer instead of the single-period train
+    const spec = state.spectrum?.comps ?? [];
+    u.uCompN.value = Math.min(20, spec.length);
+    spec.slice(0, 20).forEach((c, i) => {
+      u.uComp.value[i].set(c.kx, c.kz, c.omega, c.amp);
+      u.uCompPh.value[i] = c.phase;
+    });
+    u.uWindS.value = state.windEffect?.s ?? 0;
+    u.uEdgeH.value.set(a?.height ?? 0, spec.length ? 0 : b?.height ?? 0);
     u.uPeriod.value.set(a?.period ?? 10, b?.period ?? 5);
     u.uTide.value = state.tide;
     u.uSwash.value.set(state.runup.setup, state.runup.swash);

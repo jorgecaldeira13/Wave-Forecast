@@ -1,6 +1,7 @@
 // Turns one forecast hour into what you would actually see at the beach:
 // the solved wave fields for the renderer plus a human summary.
 
+import { buildSpectrum } from '../physics/spectrum.js';
 import {
   makeSolverGrid,
   windBreakingEffect,
@@ -158,8 +159,14 @@ export function computeSeaState(ctx, hour) {
     wash = runup(combined, primary.period);
   }
   const surfHeight = surf?.height ?? 0;
+  // the wind-sea train, if any, becomes a JONSWAP/TMA directional spectrum
+  const sea = solved.find((t) => t.kind === 'wind');
+  const spectrum = sea
+    ? buildSpectrum({ Hs: sea.height, Tp: sea.period, angle: sea.angle, depth: sea.field.boundaryDepth })
+    : { comps: [], hs: 0 };
   return {
     hour,
+    spectrum,
     trains: solved,
     surf,
     setHeight: sets?.height ?? surfHeight,

@@ -160,3 +160,27 @@ test('crossing seas need a real wind sea at a real angle', () => {
   assert.ok(crossingSeas(mk(270, 330, 1.5)) > 0.9, 'sixty degrees apart with a decent wind sea');
   assert.equal(crossingSeas(mk(270, 330, 0.2)), 0, 'a tiny wind sea does not count');
 });
+
+test('wind-sea spectrum: JONSWAP/TMA with directional spreading', async () => {
+  const { buildSpectrum, hsOf, jonswap, kitaigorodskii, spreadingExponent } = await import('../src/physics/spectrum.js');
+  const fp = 1 / 7;
+  // peak enhancement: gamma 3.3 puts more energy at the peak than Pierson-Moskowitz
+  assert.ok(jonswap(fp, fp, 3.3) / jonswap(fp, fp, 1) > 2.5);
+  // the spectrum peaks at fp
+  const fs = Array.from({ length: 60 }, (_, i) => 0.05 + i * 0.005);
+  const peak = fs.reduce((b, f) => (jonswap(f, fp) > jonswap(b, fp) ? f : b));
+  close(peak, fp, 0.01, 'peak frequency');
+  // shallow water removes energy; deep water keeps it all
+  assert.equal(kitaigorodskii(0.2, 200), 1);
+  assert.ok(kitaigorodskii(0.1, 3) < 0.3);
+  // narrower spreading above the peak than below
+  assert.ok(spreadingExponent(2 * fp, fp, 10) > 0 && spreadingExponent(0.5 * fp, fp, 10) < 1);
+  const sp = buildSpectrum({ Hs: 1.4, Tp: 7, angle: 0.3, depth: 25 });
+  close(hsOf(sp.comps), 1.4, 0.2, 'recovers the requested significant height');
+  assert.ok(sp.comps.length >= 12 && sp.comps.length <= 20);
+  // components spread around the mean direction, none heading away from the beach
+  const dirs = sp.comps.map((c) => Math.atan2(c.kz, c.kx));
+  assert.ok(Math.max(...dirs) > 0.3 && Math.min(...dirs) < 0.3);
+  assert.ok(dirs.every((d) => Math.abs(d - 0.3) < 1.3));
+  assert.equal(buildSpectrum({ Hs: 0, Tp: 7 }).comps.length, 0);
+});
