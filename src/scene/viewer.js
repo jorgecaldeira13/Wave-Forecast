@@ -142,6 +142,7 @@ export class Viewer {
     window.addEventListener('keyup', (ev) => freeKey(ev, false));
     window.addEventListener('blur', () => this.freeKeys.clear());
 
+    this.gameHook = null; // set by the surf trainer while it drives the camera
     this.flight = null;
     this.setCamera('drone', true);
     this.resize();
@@ -497,6 +498,11 @@ export class Viewer {
       light: this.shared.uSunStrength.value + this.shared.uAmbient.value,
       pxScale: this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)),
     });
+    if (this.gameHook) {
+      this.gameHook(dt * this.speed);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
     if (this.preset === 'free' && !this.walk.active) {
       // W A S D glides over the water in the direction you are facing
       const k = this.freeKeys;
