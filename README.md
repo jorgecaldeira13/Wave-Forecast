@@ -34,6 +34,8 @@ No API keys are needed.
   surf rating; the white line is the tide; dark bands are night. `←` `→` step an hour, `space` plays.
 - **Cameras**: Drone, Line-up (you bob on the swell next to a surfer), Beach (a person stands at
   the swash line for scale), Groyne, Map. Drag to orbit, scroll or pinch to zoom.
+- **Free**: fly the camera yourself. Drag to move over the beach, right-drag or two fingers to
+  turn and tilt, scroll or pinch to zoom, `W A S D` to glide.
 - **On foot**: you, 1.7 m tall, standing on the sand. Drag to look around, tap the sand or the sea
   to go there (or walk with `W A S D`). Wade in and the readout tells you how deep you are and how
   big the waves are against your body; past your depth you float and rise with each wave.

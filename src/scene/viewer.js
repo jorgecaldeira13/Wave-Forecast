@@ -40,6 +40,7 @@ void main() {
 
 export const CAMERA_PRESETS = [
   { id: 'drone', label: 'Drone' },
+  { id: 'free', label: 'Free' },
   { id: 'walk', label: 'On foot' },
   { id: 'lineup', label: 'Line-up' },
   { id: 'beach', label: 'Beach' },
@@ -126,6 +127,16 @@ export class Viewer {
     this.walk = { active: false, x: 0, z: 0, yaw: Math.PI / 2, pitch: -0.03, goal: null, eye: 2, keys: new Set(), told: 0, since: 0 };
     this.onPov = null;
     this.bindWalkControls(renderer.domElement);
+    this.freeKeys = new Set();
+    this.freeHint = 0;
+    const freeKey = (ev, on) => {
+      const k = ev.key.toLowerCase();
+      if (this.preset !== 'free' || !['w', 'a', 's', 'd'].includes(k) || ev.target.closest?.('input, textarea')) return;
+      if (on) this.freeKeys.add(k); else this.freeKeys.delete(k);
+    };
+    window.addEventListener('keydown', (ev) => freeKey(ev, true));
+    window.addEventListener('keyup', (ev) => freeKey(ev, false));
+    window.addEventListener('blur', () => this.freeKeys.clear());
 
     this.flight = null;
     this.setCamera('drone', true);
@@ -182,6 +193,32 @@ export class Viewer {
     this.userMoved = false;
     if (id === 'walk') { this.enterWalk(); return; }
     if (this.walk.active) this.leaveWalk();
+    // Free: you fly the camera yourself. Drag moves you over the beach like a map,
+    // right-drag (or two fingers) turns and tilts, scroll or pinch zooms.
+    const free = id === 'free';
+    const c = this.controls;
+    c.screenSpacePanning = false;
+    c.mouseButtons = free
+      ? { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }
+      : { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+    c.touches = free
+      ? { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE }
+      : { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+    c.minDistance = free ? 1.5 : 4;
+    c.maxDistance = free ? 6000 : 2600;
+    this.freeHint = free ? 9 : 0;
+    if (!free) this.onPov?.(null);
+    if (free) {
+      this.flight = null;
+      // start from wherever you are, looking at the sea surface in front of you
+      const dir = new THREE.Vector3();
+      this.camera.getWorldDirection(dir);
+      const tide = this.state?.tide ?? 0;
+      const reach = dir.y < -0.05 ? Math.min(600, (this.camera.position.y - tide) / -dir.y) : 120;
+      c.target.copy(this.camera.position).addScaledVector(dir, reach);
+      c.target.y = tide;
+      return;
+    }
     const pose = this.presetPose(id);
     const pos = new THREE.Vector3(...pose.pos), target = new THREE.Vector3(...pose.target);
     if (instant) {
@@ -453,6 +490,29 @@ export class Viewer {
       light: this.shared.uSunStrength.value + this.shared.uAmbient.value,
       pxScale: this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)),
     });
+    if (this.preset === 'free' && !this.walk.active) {
+      // W A S D glides over the water in the direction you are facing
+      const k = this.freeKeys;
+      if (k.size) {
+        const dir = new THREE.Vector3();
+        this.camera.getWorldDirection(dir);
+        dir.y = 0; dir.normalize();
+        const right = new THREE.Vector3(-dir.z, 0, dir.x);
+        const move = new THREE.Vector3();
+        if (k.has('w')) move.add(dir);
+        if (k.has('s')) move.sub(dir);
+        if (k.has('d')) move.add(right);
+        if (k.has('a')) move.sub(right);
+        const dist = this.camera.position.distanceTo(this.controls.target);
+        move.multiplyScalar(dt * Math.max(8, dist * 0.9));
+        this.camera.position.add(move);
+        this.controls.target.add(move);
+      }
+      if (this.freeHint > 0) {
+        this.freeHint -= dt;
+        this.onPov?.(this.freeHint > 0 ? 'Drag to move · right-drag or two fingers to turn · scroll or pinch to zoom · W A S D to glide' : null);
+      }
+    }
     if (this.walk.active) {
       this.updateWalk(dt, tide, exag);
     } else {
